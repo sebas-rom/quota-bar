@@ -58,7 +58,8 @@ private func string(_ any: Any?) -> String? {
     return t.isEmpty ? nil : t
 }
 
-/// Non-reversible account reference: the raw id never reaches UI, disk or logs.
+/// Short opaque reference: the raw id never reaches UI, disk or logs. Not a
+/// credential and not a secret, just a stable label for one account.
 public func accountRef(_ raw: String?) -> String? {
     guard let raw, !raw.isEmpty else { return nil }
     return String(stableHash(raw).prefix(10))

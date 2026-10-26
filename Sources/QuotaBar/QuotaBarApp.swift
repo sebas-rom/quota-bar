@@ -377,7 +377,7 @@ struct ProviderCard: View {
             bits.append(contentsOf: facts)
         }
         if let freshness {
-            bits.append("showing \(freshness)")
+            bits.append("last good \(freshness)")
         } else if let snapshot {
             switch snapshot.origin {
             case .network: bits.append("live")

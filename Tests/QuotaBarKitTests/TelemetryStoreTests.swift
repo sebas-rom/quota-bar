@@ -127,3 +127,27 @@ final class TelemetryStoreTests: XCTestCase {
         second.close()
     }
 }
+
+@MainActor
+final class QuotaModelHistoryTests: XCTestCase {
+    func testClearHistoryEmptiesStoreAndStopsBackfillFromReturning() throws {
+        let store = try TelemetryStore.inMemory()
+        defer { store.close() }
+        let model = QuotaModel(store: store)
+        let now = Date()
+        _ = store.insert(ProviderSnapshot(
+            provider: .codex,
+            windows: [QuotaWindow(id: "codex.primary", kind: .primary, label: "5-hour",
+                                  percent: 12, resetsAt: nil, windowMinutes: 300, isLimited: false)],
+            origin: .localLog, source: "test", observedAt: now
+        ))
+        XCTAssertEqual(store.count(), 1)
+
+        model.clearHistory()
+
+        XCTAssertEqual(store.count(), 0)
+        XCTAssertEqual(model.historyCount, 0)
+        XCTAssertEqual(store.meta("codex_backfill_v1"), "cleared",
+                       "cleared history must not be re-imported by the one-time backfill")
+    }
+}
