@@ -80,4 +80,19 @@ final class GoUsageTests: XCTestCase {
         XCTAssertEqual(resetText(until: now.addingTimeInterval(3 * 86400), now: now), "resets in 3d")
         XCTAssertNil(resetText(until: nil))
     }
+
+    func testUsageColorThresholds() {
+        XCTAssertEqual(usageColorName(for: 0), "green")
+        XCTAssertEqual(usageColorName(for: 49.9), "green")
+        XCTAssertEqual(usageColorName(for: 50), "yellow")
+        XCTAssertEqual(usageColorName(for: 83), "orange")
+        XCTAssertEqual(usageColorName(for: 90), "red")
+        XCTAssertEqual(usageColorName(for: 100), "red")
+    }
+
+    func testEmptyUsageHasNoLimitingWindow() {
+        let usage = GoUsage(rolling: nil, weekly: nil, monthly: nil)
+        XCTAssertTrue(usage.available.isEmpty)
+        XCTAssertNil(usage.limiting)
+    }
 }

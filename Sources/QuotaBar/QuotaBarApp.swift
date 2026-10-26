@@ -2,7 +2,17 @@ import SwiftUI
 import ServiceManagement
 import QuotaBarKit
 
-// QuotaBar v0.2 — two provider cards, in-app key entry (Keychain), no scraping.
+// QuotaBar v0.3 — two provider cards, in-app key entry (Keychain), compact
+// footer with overflow menu, VoiceOver semantics, system-only styling.
+
+private let appVersion = "0.3.0"
+
+private enum Layout {
+    static let outer: CGFloat = 12
+    static let card: CGFloat = 12
+    static let cardSpacing: CGFloat = 10
+    static let rowSpacing: CGFloat = 10
+}
 
 private func dotColor(_ name: String) -> Color {
     switch name {
@@ -14,25 +24,43 @@ private func dotColor(_ name: String) -> Color {
     }
 }
 
-private struct WindowRow: View {
+private struct MeterRow: View {
+    let provider: String
     let label: String
-    let window: GoWindow
+    let percent: Double
+    let reset: Date?
+    let flag: String?
+    let isLimiting: Bool
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text(label).font(.subheadline)
-                if window.isRateLimited {
-                    Text("limit reached").font(.caption).foregroundStyle(.red)
+                if let flag {
+                    Text(flag).font(.caption).foregroundStyle(.red)
                 }
                 Spacer()
-                Text("\(Int(window.percent.rounded()))%").font(.subheadline).monospacedDigit()
+                Text("\(Int(percent.rounded()))%")
+                    .font(.subheadline).fontWeight(.semibold).monospacedDigit()
             }
-            ProgressView(value: min(max(window.percent, 0), 100), total: 100)
-                .tint(dotColor(usageColorName(for: window.percent)))
-            if let r = resetText(until: window.resetsAt) {
+            ProgressView(value: min(max(percent, 0), 100), total: 100)
+                .tint(dotColor(usageColorName(for: percent)))
+            if let r = resetText(until: reset) {
                 Text(r).font(.caption).foregroundStyle(.secondary)
             }
         }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(provider), \(label) quota")
+        .accessibilityValue("\(Int(percent.rounded())) percent used")
+        .accessibilityHint(accessibilityHint)
+    }
+
+    private var accessibilityHint: String {
+        var bits: [String] = []
+        if isLimiting { bits.append("Limiting window.") }
+        if flag != nil { bits.append("Limit reached.") }
+        if let r = resetText(until: reset) { bits.append(r.capitalized + ".") }
+        return bits.joined(separator: " ")
     }
 }
 
@@ -42,18 +70,20 @@ private struct Card<Content: View>: View {
     let subtitle: String?
     @ViewBuilder let content: Content
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: Layout.rowSpacing) {
             HStack(spacing: 6) {
                 Circle().fill(dotColor(dot)).frame(width: 8, height: 8)
+                    .accessibilityHidden(true)
                 Text(title).font(.headline)
                 Spacer()
                 if let s = subtitle {
                     Text(s).font(.caption).foregroundStyle(.secondary)
                 }
             }
+            .accessibilityElement(children: .combine)
             content
         }
-        .padding(10)
+        .padding(Layout.card)
         .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
     }
 }
@@ -65,22 +95,35 @@ struct QuotaBarApp: App {
     @State private var keyInput = ""
     @State private var keyError: String?
     @State private var validating = false
+    @State private var showAbout = false
+    @State private var confirmRemoveKey = false
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
 
     var body: some Scene {
         MenuBarExtra(model.barText, systemImage: "gauge") {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: Layout.cardSpacing) {
                 goCard
                 codexCard
                 if showKeyEntry { keyEntry }
                 Divider()
                 footer
             }
-            .padding(10)
+            .padding(Layout.outer)
             .frame(minWidth: 300)
             .task { await model.refresh() }
             .onReceive(Timer.publish(every: 300, on: .main, in: .common).autoconnect()) { _ in
                 Task { await model.refresh() }
+            }
+            .sheet(isPresented: $showAbout) { aboutView }
+            .confirmationDialog(
+                "Remove the saved Go API key?",
+                isPresented: $confirmRemoveKey,
+                titleVisibility: .visible
+            ) {
+                Button("Remove Saved Go Key", role: .destructive) { model.forgetGoKey() }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Removes only the key you entered in QuotaBar (stored in this Mac's Keychain). Your OpenCode and Codex credentials are untouched.")
             }
         }
         .menuBarExtraStyle(.window)
@@ -91,13 +134,26 @@ struct QuotaBarApp: App {
     @ViewBuilder
     private var goCard: some View {
         switch model.goState {
-        case let .ready(usage, source):
+        case let .ready(usage, _):
             let lim = usage.limiting
-            Card(title: "OpenCode Go", dot: lim.map { usageColorName(for: $0.window.percent) } ?? "gray",
-                 subtitle: [lim.map { "\($0.label) limiting" }, source].compactMap { $0 }.joined(separator: " · ")) {
-                if let r = usage.rolling { WindowRow(label: "5-hour", window: r) }
-                if let w = usage.weekly { WindowRow(label: "Weekly", window: w) }
-                if let m = usage.monthly { WindowRow(label: "Monthly", window: m) }
+            Card(title: "OpenCode Go",
+                 dot: lim.map { usageColorName(for: $0.window.percent) } ?? "gray",
+                 subtitle: lim.map { "\($0.label) · \(Int($0.window.percent.rounded()))%" }) {
+                if let r = usage.rolling {
+                    MeterRow(provider: "OpenCode Go", label: "5-hour", percent: r.percent,
+                             reset: r.resetsAt, flag: r.isRateLimited ? "limit reached" : nil,
+                             isLimiting: lim?.label == "5h")
+                }
+                if let w = usage.weekly {
+                    MeterRow(provider: "OpenCode Go", label: "Weekly", percent: w.percent,
+                             reset: w.resetsAt, flag: w.isRateLimited ? "limit reached" : nil,
+                             isLimiting: lim?.label == "7d")
+                }
+                if let m = usage.monthly {
+                    MeterRow(provider: "OpenCode Go", label: "Monthly", percent: m.percent,
+                             reset: m.resetsAt, flag: m.isRateLimited ? "limit reached" : nil,
+                             isLimiting: lim?.label == "30d")
+                }
             }
         case .noKey:
             Card(title: "OpenCode Go", dot: "gray", subtitle: nil) {
@@ -144,31 +200,11 @@ struct QuotaBarApp: App {
             }
         } else if let p = c.primary {
             Card(title: "Codex", dot: usageColorName(for: p), subtitle: c.plan) {
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack {
-                        Text("Primary").font(.subheadline)
-                        Spacer()
-                        Text("\(Int(p.rounded()))%").font(.subheadline).monospacedDigit()
-                    }
-                    ProgressView(value: min(max(p, 0), 100), total: 100)
-                        .tint(dotColor(usageColorName(for: p)))
-                    if let r = resetText(until: c.primaryReset) {
-                        Text(r).font(.caption).foregroundStyle(.secondary)
-                    }
-                }
+                MeterRow(provider: "Codex", label: "Primary", percent: p,
+                         reset: c.primaryReset, flag: nil, isLimiting: true)
                 if let s = c.secondary {
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack {
-                            Text("Secondary").font(.subheadline)
-                            Spacer()
-                            Text("\(Int(s.rounded()))%").font(.subheadline).monospacedDigit()
-                        }
-                        ProgressView(value: min(max(s, 0), 100), total: 100)
-                            .tint(dotColor(usageColorName(for: s)))
-                        if let r = resetText(until: c.secondaryReset) {
-                            Text(r).font(.caption).foregroundStyle(.secondary)
-                        }
-                    }
+                    MeterRow(provider: "Codex", label: "Secondary", percent: s,
+                             reset: c.secondaryReset, flag: nil, isLimiting: false)
                 }
             }
         } else {
@@ -215,38 +251,80 @@ struct QuotaBarApp: App {
                 .disabled(validating)
             }
         }
-        .padding(10)
+        .padding(Layout.card)
         .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
     }
 
-    // MARK: Footer
+    // MARK: Footer — Refresh + overflow menu
 
     @ViewBuilder
     private var footer: some View {
-        if let t = model.lastUpdate {
-            Text("Updated \(t.formatted(date: .omitted, time: .shortened)) · v0.2.0")
-                .font(.caption).foregroundStyle(.secondary)
-        }
-        Button(model.busy ? "Refreshing…" : "Refresh now") {
-            Task { await model.refresh() }
-        }
-        .keyboardShortcut("r").disabled(model.busy)
-        Toggle("Launch at login", isOn: $launchAtLogin)
-            .onChange(of: launchAtLogin) { on in
-                do {
-                    if on { try SMAppService.mainApp.register() }
-                    else { try SMAppService.mainApp.unregister() }
-                } catch {
-                    launchAtLogin = SMAppService.mainApp.status == .enabled
-                }
+        HStack {
+            Button(model.busy ? "Refreshing…" : "Refresh") {
+                Task { await model.refresh() }
             }
-        Button("Reveal auth files") {
-            NSWorkspace.shared.open(homeDir().appendingPathComponent(".local/share/opencode"))
-            NSWorkspace.shared.open(homeDir().appendingPathComponent(".codex"))
+            .keyboardShortcut("r").disabled(model.busy)
+            Spacer()
+            Menu {
+                Toggle("Launch at login", isOn: $launchAtLogin)
+                    .onChange(of: launchAtLogin) { on in
+                        do {
+                            if on { try SMAppService.mainApp.register() }
+                            else { try SMAppService.mainApp.unregister() }
+                        } catch {
+                            launchAtLogin = SMAppService.mainApp.status == .enabled
+                        }
+                    }
+                Button("Show Credential Files") {
+                    NSWorkspace.shared.open(homeDir().appendingPathComponent(".local/share/opencode"))
+                    NSWorkspace.shared.open(homeDir().appendingPathComponent(".codex"))
+                }
+                if loadKeychainKey(account: quotaBarGoAccount) != nil {
+                    Button("Remove Saved Go Key…") { confirmRemoveKey = true }
+                }
+                Divider()
+                Button("About QuotaBar") { showAbout = true }
+                Button("Quit QuotaBar") { NSApplication.shared.terminate(nil) }
+                    .keyboardShortcut("q")
+            } label: {
+                Label("More", systemImage: "ellipsis.circle")
+            }
+            .menuStyle(.borderlessButton)
+            .accessibilityLabel("More actions")
         }
-        if loadKeychainKey(account: quotaBarGoAccount) != nil {
-            Button("Forget saved API key") { model.forgetGoKey() }
+        if let t = model.lastUpdate {
+            Text("Updated \(t.formatted(date: .omitted, time: .shortened))")
+                .font(.caption2).foregroundStyle(.secondary)
+                .accessibilityLabel("Last updated \(t.formatted(date: .omitted, time: .shortened))")
         }
-        Button("Quit") { NSApplication.shared.terminate(nil) }.keyboardShortcut("q")
+    }
+
+    // MARK: About
+
+    @ViewBuilder
+    private var aboutView: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("QuotaBar \(appVersion)").font(.headline)
+            Text("Minimal menu-bar for opencode-go + Codex quotas.")
+                .foregroundStyle(.secondary)
+            Divider()
+            Text("Go: opencode.ai/zen/go/v1/usage").font(.caption).monospaced()
+            Text("Codex: chatgpt.com/backend-api/wham/usage").font(.caption).monospaced()
+            Text("Go key source: \(goSourceText)").font(.caption).foregroundStyle(.secondary)
+            Text("Local-only. Quota reads use your existing tokens; a key you enter is kept in this Mac's Keychain and never logged.")
+                .font(.caption).foregroundStyle(.secondary)
+            HStack {
+                Spacer()
+                Button("Done") { showAbout = false }.keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(16)
+        .frame(width: 320)
+    }
+
+    private var goSourceText: String {
+        if case let .ready(_, source) = model.goState { return source }
+        if loadKeychainKey(account: quotaBarGoAccount) != nil { return "Keychain (saved, not yet validated)" }
+        return "opencode auth.json"
     }
 }
