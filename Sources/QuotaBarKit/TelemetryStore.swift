@@ -22,6 +22,9 @@ public final class TelemetryStore: @unchecked Sendable {
     private var db: OpaquePointer?
     private let lock = NSLock()
     public let path: String
+    /// Observations written before this instant are never persisted again.
+    /// Set by "Clear History"; protects against re-import from local logs.
+    private var clearedAt: Date?
 
     public static func defaultPath() -> URL {
         homeDir()
@@ -55,6 +58,9 @@ public final class TelemetryStore: @unchecked Sendable {
         try exec("PRAGMA synchronous=NORMAL")
         try exec("PRAGMA busy_timeout=2000")
         try migrate()
+        if let cutoff = meta("history_cleared_at").flatMap(Double.init) {
+            clearedAt = Date(timeIntervalSince1970: cutoff)
+        }
     }
 
     deinit { close() }
@@ -71,6 +77,12 @@ public final class TelemetryStore: @unchecked Sendable {
     @discardableResult
     public func insert(_ snapshot: ProviderSnapshot) -> Int {
         withLock { db in
+            // Local-log observations can be re-read at every launch or offline
+            // refresh; never let them resurrect history the user deleted.
+            if snapshot.origin != .network, let cutoff = clearedAt,
+               snapshot.observedAt <= cutoff {
+                return 0
+            }
             let sql = """
             INSERT OR IGNORE INTO sample
                 (provider, window_id, window_label, percent, resets_at, observed_at, origin, plan, account_ref)
@@ -106,6 +118,30 @@ public final class TelemetryStore: @unchecked Sendable {
     public func reset() {
         _ = try? exec("DELETE FROM sample")
         _ = try? exec("DELETE FROM meta")
+        clearedAt = nil
+    }
+
+    /// Deletes every observation and records the deletion cutoff in the same
+    /// transaction, so a crash can never leave the store empty without the
+    /// cutoff (or vice versa).
+    public func clearAll(now: Date = Date()) {
+        lock.lock(); defer { lock.unlock() }
+        guard let db else { return }
+        guard sqlite3_exec(db, "BEGIN IMMEDIATE", nil, nil, nil) == SQLITE_OK else { return }
+        let delete = sqlite3_exec(db, "DELETE FROM sample", nil, nil, nil) == SQLITE_OK
+        var stmt: OpaquePointer?
+        var cutoffWritten = false
+        if sqlite3_prepare_v2(db, "INSERT OR REPLACE INTO meta(key, value) VALUES ('history_cleared_at', ?)", -1, &stmt, nil) == SQLITE_OK {
+            sqlite3_bind_double(stmt, 1, now.timeIntervalSince1970)
+            cutoffWritten = sqlite3_step(stmt) == SQLITE_DONE
+        }
+        sqlite3_finalize(stmt)
+        if delete && cutoffWritten {
+            sqlite3_exec(db, "COMMIT", nil, nil, nil)
+            clearedAt = now
+        } else {
+            sqlite3_exec(db, "ROLLBACK", nil, nil, nil)
+        }
     }
 
     // MARK: reads
@@ -118,7 +154,7 @@ public final class TelemetryStore: @unchecked Sendable {
             let sql = """
             SELECT observed_at, percent FROM sample
             WHERE provider = ? AND window_id = ? AND observed_at >= ?
-              AND (? IS NULL OR account_ref = ?)
+              AND (? IS NULL OR account_ref = ? OR account_ref IS NULL)
             ORDER BY observed_at ASC LIMIT 5000
             """
             var stmt: OpaquePointer?
@@ -138,6 +174,26 @@ public final class TelemetryStore: @unchecked Sendable {
             }
             return out
         } ?? []
+    }
+
+    /// True when the range contains device-level (local-log) rows that carry no
+    /// account identity. The UI surfaces this instead of implying ownership.
+    public func hasUnattributedHistory(provider: ProviderID, windowID: String, since: Date) -> Bool {
+        withLock { db in
+            var stmt: OpaquePointer?
+            defer { sqlite3_finalize(stmt) }
+            let sql = """
+            SELECT 1 FROM sample
+            WHERE provider = ? AND window_id = ? AND observed_at >= ?
+              AND origin = 'localLog' AND account_ref IS NULL
+            LIMIT 1
+            """
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return false }
+            bind(stmt, 1, provider.rawValue)
+            bind(stmt, 2, windowID)
+            sqlite3_bind_double(stmt, 3, since.timeIntervalSince1970)
+            return sqlite3_step(stmt) == SQLITE_ROW
+        } ?? false
     }
 
     public func observedWindowIDs(provider: ProviderID) -> [String] {

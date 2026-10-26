@@ -170,6 +170,16 @@ final class QuotaModelHistoryTests: XCTestCase {
         XCTAssertEqual(model.historyCount, 0)
         XCTAssertEqual(store.meta("codex_backfill_v1"), "cleared",
                        "cleared history must not be re-imported by the one-time backfill")
+
+        // Simulate the next launch: an old local observation must not reappear.
+        let stale = ProviderSnapshot(
+            provider: .codex,
+            windows: [QuotaWindow(id: "codex.primary", kind: .primary, label: "5-hour",
+                                  percent: 12, resetsAt: nil, windowMinutes: 300, isLimited: false)],
+            origin: .localLog, source: "test", observedAt: now.addingTimeInterval(-60)
+        )
+        XCTAssertEqual(store.insert(stale), 0)
+        XCTAssertEqual(store.count(), 0)
     }
 }
 
@@ -210,5 +220,77 @@ final class CodexBackfillTests: XCTestCase {
         XCTAssertEqual(CodexBackfill.importObservations([observation], into: store, accountRef: "acct"), 0)
         XCTAssertEqual(store.series(provider: .codex, windowID: "codex.primary",
                                     since: .distantPast, accountRef: "acct").count, 1)
+    }
+}
+
+final class HistoryClearTests: XCTestCase {
+    private func local(_ percent: Double, at date: Date) -> ProviderSnapshot {
+        ProviderSnapshot(
+            provider: .codex,
+            windows: [QuotaWindow(id: "codex.primary", kind: .primary, label: "5-hour",
+                                  percent: percent, resetsAt: nil, windowMinutes: 300, isLimited: false)],
+            accountRef: nil, origin: .localLog, source: "test", observedAt: date
+        )
+    }
+
+    private func live(_ percent: Double, at date: Date) -> ProviderSnapshot {
+        ProviderSnapshot(
+            provider: .codex,
+            windows: [QuotaWindow(id: "codex.primary", kind: .primary, label: "5-hour",
+                                  percent: percent, resetsAt: nil, windowMinutes: 300, isLimited: false)],
+            accountRef: "acct", origin: .network, source: "test", observedAt: date
+        )
+    }
+
+    func testClearAllBlocksOldLocalRowsAndAllowsLiveOnes() throws {
+        let store = try TelemetryStore.inMemory()
+        defer { store.close() }
+        let now = Date()
+
+        XCTAssertEqual(store.insert(local(10, at: now.addingTimeInterval(-3_600))), 1)
+        store.clearAll(now: now)
+        XCTAssertEqual(store.count(), 0)
+
+        // The exact resurrection path: launch/refresh re-reads the old log.
+        XCTAssertEqual(store.insert(local(10, at: now.addingTimeInterval(-3_600))), 0)
+        // Live observations after clearing are recorded normally.
+        XCTAssertEqual(store.insert(live(20, at: now)), 1)
+        // New local observations (newer than the cutoff) are still useful.
+        XCTAssertEqual(store.insert(local(21, at: now.addingTimeInterval(300))), 1)
+        XCTAssertEqual(store.count(), 2)
+    }
+
+    func testCutoffSurvivesReopen() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("quotabar-cutoff-\(UUID().uuidString).sqlite")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let now = Date()
+
+        do {
+            let first = try TelemetryStore(path: url)
+            _ = first.insert(local(10, at: now.addingTimeInterval(-60)))
+            first.clearAll(now: now)
+            first.close()
+        }
+        let second = try TelemetryStore(path: url)
+        XCTAssertEqual(second.insert(local(10, at: now.addingTimeInterval(-60))), 0,
+                       "a relaunch must not resurrect cleared local history")
+        second.close()
+    }
+
+    func testScopedSeriesIncludesDeviceLevelRowsAndReportsThem() throws {
+        let store = try TelemetryStore.inMemory()
+        defer { store.close() }
+        let now = Date()
+        _ = store.insert(live(10, at: now.addingTimeInterval(-120)))
+        _ = store.insert(local(11, at: now.addingTimeInterval(-60)))
+
+        let scoped = store.series(provider: .codex, windowID: "codex.primary",
+                                  since: now.addingTimeInterval(-3_600), accountRef: "acct")
+        XCTAssertEqual(scoped.count, 2, "account-scoped live rows plus device-level local rows")
+        XCTAssertTrue(store.hasUnattributedHistory(provider: .codex, windowID: "codex.primary",
+                                                   since: now.addingTimeInterval(-3_600)))
+        XCTAssertFalse(store.hasUnattributedHistory(provider: .codex, windowID: "codex.primary",
+                                                    since: now.addingTimeInterval(-30)))
     }
 }

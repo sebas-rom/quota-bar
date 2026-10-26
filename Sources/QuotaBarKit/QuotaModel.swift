@@ -145,8 +145,10 @@ public final class QuotaModel: ObservableObject {
     }
 
     public func trend(provider: ProviderID, windowID: String, hours: Int = 24) -> [SamplePoint] {
-        // Account-scoped: switching accounts must not blend two histories.
-        let accountRef = snapshots[provider]?.accountRef
+        // Live rows are account-scoped; device-level local-log rows (null
+        // account) are included and labelled in the UI, never presented as
+        // belonging to the signed-in account.
+        let accountRef = historyScopeRef(for: provider)
         let key = "\(provider.rawValue)|\(windowID)|\(hours)|\(accountRef ?? "-")"
         if let cached = trendCache[key] { return cached }
         guard let store else { return [] }
@@ -170,9 +172,9 @@ public final class QuotaModel: ObservableObject {
         inFlight?.cancel()
         backfillTask = nil
         _ = await inFlight?.value
-        store?.reset()
-        // Keep the cleared state: a one-time Codex backfill must not resurrect
-        // history the user just deleted.
+        // Deletion + cutoff in one transaction; local-log rows older than the
+        // cutoff can never be persisted again.
+        store?.clearAll()
         store?.setMeta("codex_backfill_v1", "cleared")
         invalidateHistory()
         lastPrune = Date()
@@ -188,7 +190,8 @@ public final class QuotaModel: ObservableObject {
             provider: .codex,
             windows: local.windows,
             plan: local.plan,
-            accountRef: localAccountRef(),
+            // Device-level: local logs carry no trustworthy account identity.
+            accountRef: nil,
             origin: .localLog,
             source: "Codex local session log",
             observedAt: local.observedAt
@@ -204,11 +207,10 @@ public final class QuotaModel: ObservableObject {
         let marker = store.meta("codex_backfill_v1")
         guard marker == nil || marker == "running" else { return }
         store.setMeta("codex_backfill_v1", "running")
-        let ref = localAccountRef()
         backfillTask = Task.detached(priority: .utility) { [weak self] in
             let since = Date().addingTimeInterval(-14 * 86_400)
             let observations = CodexLocalLog.observations(since: since)
-            let inserted = CodexBackfill.importObservations(observations, into: store, accountRef: ref) {
+            let inserted = CodexBackfill.importObservations(observations, into: store, accountRef: nil) {
                 Task.isCancelled
             }
             if Task.isCancelled { return }
@@ -220,11 +222,24 @@ public final class QuotaModel: ObservableObject {
         }
     }
 
-    /// Local observations carry the identity of the account the Codex CLI is
-    /// currently signed in as. Without credentials they stay unattributed, and
-    /// the store treats that as "any account" rather than merging silently.
+    /// Scope for history queries: the account the Codex CLI is currently signed
+    /// in as. Used to select account-scoped live rows; local-log rows stay
+    /// unattributed and are shown as device-level.
     private func localAccountRef() -> String? {
         accountRef(readCodexCreds()?.accountId)
+    }
+
+    private func historyScopeRef(for provider: ProviderID) -> String? {
+        guard provider == .codex else { return nil }
+        return localAccountRef() ?? snapshots[provider]?.accountRef
+    }
+
+    public func hasDeviceLevelHistory(provider: ProviderID, windowID: String, hours: Int) -> Bool {
+        store?.hasUnattributedHistory(
+            provider: provider,
+            windowID: windowID,
+            since: Date().addingTimeInterval(-Double(hours) * 3_600)
+        ) ?? false
     }
 
     // MARK: presentation

@@ -92,6 +92,12 @@ every quota row and chart.
   endpoint (out of scope).
 - Codex's local log can lag the live endpoint. The app prefers the live probe and
   labels anything older than 15 minutes.
+- Local Codex session-log history is **device-level**: it carries no trustworthy
+  account identity, so it is not attributed to the signed-in account and is
+  labelled as such in the History window. Live observations are account-scoped,
+  so switching accounts never blends live history.
+- **Clear History** is permanent: it records a deletion cutoff, so re-reading the
+  Codex log (relaunch or offline fallback) cannot bring deleted observations back.
 - No Sparkle auto-update — re-download the zip. Beta releases are unsigned.
 
 ## Collaborate

@@ -199,7 +199,8 @@ public struct QuotaProbes {
             provider: .codex,
             windows: local.windows,
             plan: local.plan,
-            accountRef: accountRef,
+            // Local logs are device-level; no trustworthy account identity.
+            accountRef: nil,
             origin: .localLog,
             source: "Codex local session log",
             observedAt: local.observedAt

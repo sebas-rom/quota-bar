@@ -64,7 +64,7 @@ struct HistoryView: View {
             }
             Text("Percent used per window on a fixed 0–100 scale. Sampled every 5 minutes, kept for 90 days, never uploaded.")
                 .font(.caption2)
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .padding(16)
@@ -143,6 +143,13 @@ struct ProviderHistorySection: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
+            if showsDeviceLevelNote {
+                Label("Local session-log history is device-level (not account-tagged).",
+                      systemImage: "externaldrive")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .labelStyle(.titleAndIcon)
+            }
 
             if let snapshot, !snapshot.windows.isEmpty {
                 windowRows(snapshot.windows)
@@ -167,6 +174,13 @@ struct ProviderHistorySection: View {
                     }
                 }
             }
+        }
+    }
+
+    private var showsDeviceLevelNote: Bool {
+        guard provider == .codex, let snapshot else { return false }
+        return snapshot.windows.contains {
+            model.hasDeviceLevelHistory(provider: provider, windowID: $0.id, hours: range.hours)
         }
     }
 

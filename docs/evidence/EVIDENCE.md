@@ -45,6 +45,15 @@ The UI copy is English-only and all dates/percentages use system formatters, so
 there is no second-locale layout risk. The popover is fixed-width (320 pt) and is
 the narrowest supported presentation; the History window has a 520 pt minimum.
 
+## Data-integrity checks covered by tests
+
+- Clear History records a deletion cutoff in the same transaction; older local
+  observations are rejected on insert, including after a store reopen.
+- History queries include device-level local-log rows only as device-level; the
+  History window labels them and never claims they belong to the account.
+- Fallback snapshots keep their original observation timestamp (deduplicated by
+  primary key), so an offline refresh cannot fabricate a flat history.
+
 ## Manual smoke (not captured here)
 
 - Open the popover with both providers live, then close it and wait 5 minutes:
