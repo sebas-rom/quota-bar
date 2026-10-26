@@ -110,11 +110,15 @@ public final class TelemetryStore: @unchecked Sendable {
 
     // MARK: reads
 
-    public func series(provider: ProviderID, windowID: String, since: Date) -> [SamplePoint] {
+    /// `accountRef == nil` means "any account" (Go has no account identity);
+    /// a value scopes the history so switching accounts never blends charts.
+    public func series(provider: ProviderID, windowID: String, since: Date,
+                       accountRef: String? = nil) -> [SamplePoint] {
         withLock { db in
             let sql = """
             SELECT observed_at, percent FROM sample
             WHERE provider = ? AND window_id = ? AND observed_at >= ?
+              AND (? IS NULL OR account_ref = ?)
             ORDER BY observed_at ASC LIMIT 5000
             """
             var stmt: OpaquePointer?
@@ -123,6 +127,8 @@ public final class TelemetryStore: @unchecked Sendable {
             bind(stmt, 1, provider.rawValue)
             bind(stmt, 2, windowID)
             sqlite3_bind_double(stmt, 3, since.timeIntervalSince1970)
+            if let accountRef { bind(stmt, 4, accountRef); bind(stmt, 5, accountRef) }
+            else { sqlite3_bind_null(stmt, 4); sqlite3_bind_null(stmt, 5) }
             var out: [SamplePoint] = []
             while sqlite3_step(stmt) == SQLITE_ROW {
                 out.append(SamplePoint(

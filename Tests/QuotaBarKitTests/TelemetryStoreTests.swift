@@ -112,6 +112,27 @@ final class TelemetryStoreTests: XCTestCase {
                        snap.observedAt.timeIntervalSince1970, accuracy: 0.001)
     }
 
+    func testSeriesCanBeScopedToAccount() {
+        let now = Date()
+        for (offset, ref) in [(0.0, "acctA"), (-300.0, "acctB")] {
+            _ = store.insert(ProviderSnapshot(
+                provider: .codex,
+                windows: [QuotaWindow(id: "codex.primary", kind: .primary, label: "5-hour",
+                                      percent: 10 + offset / -30, resetsAt: nil,
+                                      windowMinutes: 300, isLimited: false)],
+                accountRef: ref,
+                origin: .network, source: "test",
+                observedAt: now.addingTimeInterval(offset)
+            ))
+        }
+        let scoped = store.series(provider: .codex, windowID: "codex.primary",
+                                  since: now.addingTimeInterval(-3_600), accountRef: "acctA")
+        XCTAssertEqual(scoped.count, 1)
+        let unscoped = store.series(provider: .codex, windowID: "codex.primary",
+                                    since: now.addingTimeInterval(-3_600))
+        XCTAssertEqual(unscoped.count, 2)
+    }
+
     func testStoreSurvivesReopen() throws {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("quotabar-store-\(UUID().uuidString).sqlite")
@@ -130,7 +151,7 @@ final class TelemetryStoreTests: XCTestCase {
 
 @MainActor
 final class QuotaModelHistoryTests: XCTestCase {
-    func testClearHistoryEmptiesStoreAndStopsBackfillFromReturning() throws {
+    func testClearHistoryEmptiesStoreAndStopsBackfillFromReturning() async throws {
         let store = try TelemetryStore.inMemory()
         defer { store.close() }
         let model = QuotaModel(store: store)
@@ -143,7 +164,7 @@ final class QuotaModelHistoryTests: XCTestCase {
         ))
         XCTAssertEqual(store.count(), 1)
 
-        model.clearHistory()
+        await model.clearHistory()
 
         XCTAssertEqual(store.count(), 0)
         XCTAssertEqual(model.historyCount, 0)

@@ -24,6 +24,7 @@ public final class QuotaModel: ObservableObject {
     private var timer: Timer?
     private var trendCache: [String: [SamplePoint]] = [:]
     private var lastPrune = Date.distantPast
+    private var backfillTask: Task<Void, Never>?
 
     public init(probes: QuotaProbes = QuotaProbes(), store: TelemetryStore? = nil, isDemo: Bool = false) {
         self.probes = probes
@@ -114,11 +115,16 @@ public final class QuotaModel: ObservableObject {
     }
 
     public func trend(provider: ProviderID, windowID: String, hours: Int = 24) -> [SamplePoint] {
-        let key = "\(provider.rawValue)|\(windowID)|\(hours)"
+        // Account-scoped: switching accounts must not blend two histories.
+        let accountRef = snapshots[provider]?.accountRef
+        let key = "\(provider.rawValue)|\(windowID)|\(hours)|\(accountRef ?? "-")"
         if let cached = trendCache[key] { return cached }
         guard let store else { return [] }
         let since = Date().addingTimeInterval(-Double(hours) * 3_600)
-        let points = downsample(store.series(provider: provider, windowID: windowID, since: since), max: 240)
+        let points = downsample(
+            store.series(provider: provider, windowID: windowID, since: since, accountRef: accountRef),
+            max: 240
+        )
         trendCache[key] = points
         return points
     }
@@ -127,7 +133,13 @@ public final class QuotaModel: ObservableObject {
         store?.observedWindowIDs(provider: provider) ?? []
     }
 
-    public func clearHistory() {
+    /// Cancels any in-flight import before deleting, so nothing can reappear
+    /// after the user confirms. Async because it waits for that cancellation.
+    public func clearHistory() async {
+        let inFlight = backfillTask
+        inFlight?.cancel()
+        backfillTask = nil
+        _ = await inFlight?.value
         store?.reset()
         // Keep the cleared state: a one-time Codex backfill must not resurrect
         // history the user just deleted.
@@ -157,14 +169,15 @@ public final class QuotaModel: ObservableObject {
     /// One-time import of the last 14 days of Codex rate-limit snapshots.
     /// Idempotent (primary key) and recorded in meta so it runs once.
     public func runCodexBackfillIfNeeded() {
-        guard let store else { return }
+        guard let store, backfillTask == nil else { return }
         let marker = store.meta("codex_backfill_v1")
         guard marker == nil || marker == "running" else { return }
         store.setMeta("codex_backfill_v1", "running")
-        Task.detached(priority: .utility) {
+        backfillTask = Task.detached(priority: .utility) { [weak self] in
             let since = Date().addingTimeInterval(-14 * 86_400)
             let observations = CodexLocalLog.observations(since: since)
             for observation in observations {
+                if Task.isCancelled { return }
                 let snapshot = ProviderSnapshot(
                     provider: .codex,
                     windows: observation.windows,
@@ -175,8 +188,10 @@ public final class QuotaModel: ObservableObject {
                 )
                 store.insert(snapshot)
             }
+            if Task.isCancelled { return }
             store.setMeta("codex_backfill_v1", "\(observations.count)")
             await MainActor.run { [weak self] in
+                self?.backfillTask = nil
                 self?.invalidateHistory()
             }
         }

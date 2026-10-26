@@ -49,7 +49,7 @@ struct HistoryView: View {
             titleVisibility: .visible
         ) {
             Button("Delete History", role: .destructive) {
-                model.clearHistory()
+                Task { await model.clearHistory() }
             }
             Button("Cancel", role: .cancel) {}
         } message: {

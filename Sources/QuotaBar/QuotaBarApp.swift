@@ -135,7 +135,7 @@ struct PopoverView: View {
                     isPresented: $confirmClearHistory,
                     titleVisibility: .visible
                 ) {
-                    Button("Delete History", role: .destructive) { model.clearHistory() }
+                    Button("Delete History", role: .destructive) { Task { await model.clearHistory() } }
                     Button("Cancel", role: .cancel) {}
                 } message: {
                     Text("Removes every stored observation on this Mac. Live percentages keep working; history restarts empty.")
