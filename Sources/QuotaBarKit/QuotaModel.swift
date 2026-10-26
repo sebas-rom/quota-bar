@@ -1,6 +1,35 @@
 import Foundation
 import Combine
 
+// MARK: - Backfill
+
+/// Imports timestamped local Codex observations. Extracted so cancellation can
+/// be proven deterministically instead of raced against a real importer.
+public enum CodexBackfill {
+    @discardableResult
+    public static func importObservations(
+        _ observations: [CodexLogObservation],
+        into store: TelemetryStore,
+        accountRef: String?,
+        isCancelled: () -> Bool = { false }
+    ) -> Int {
+        var inserted = 0
+        for observation in observations {
+            if isCancelled() { break }
+            inserted += store.insert(ProviderSnapshot(
+                provider: .codex,
+                windows: observation.windows,
+                plan: observation.plan,
+                accountRef: accountRef,
+                origin: .localLog,
+                source: "Codex local session log",
+                observedAt: observation.observedAt
+            ))
+        }
+        return inserted
+    }
+}
+
 // MARK: - Model
 //
 // Keeps the last good snapshot per provider, writes observations to the local
@@ -50,6 +79,7 @@ public final class QuotaModel: ObservableObject {
     // MARK: lifecycle
 
     public func start() {
+        guard timer == nil else { return }
         seedFromLocalCodex()
         runCodexBackfillIfNeeded()
         Task { await refresh() }
@@ -158,6 +188,7 @@ public final class QuotaModel: ObservableObject {
             provider: .codex,
             windows: local.windows,
             plan: local.plan,
+            accountRef: localAccountRef(),
             origin: .localLog,
             source: "Codex local session log",
             observedAt: local.observedAt
@@ -173,28 +204,27 @@ public final class QuotaModel: ObservableObject {
         let marker = store.meta("codex_backfill_v1")
         guard marker == nil || marker == "running" else { return }
         store.setMeta("codex_backfill_v1", "running")
+        let ref = localAccountRef()
         backfillTask = Task.detached(priority: .utility) { [weak self] in
             let since = Date().addingTimeInterval(-14 * 86_400)
             let observations = CodexLocalLog.observations(since: since)
-            for observation in observations {
-                if Task.isCancelled { return }
-                let snapshot = ProviderSnapshot(
-                    provider: .codex,
-                    windows: observation.windows,
-                    plan: observation.plan,
-                    origin: .localLog,
-                    source: "Codex local session log",
-                    observedAt: observation.observedAt
-                )
-                store.insert(snapshot)
+            let inserted = CodexBackfill.importObservations(observations, into: store, accountRef: ref) {
+                Task.isCancelled
             }
             if Task.isCancelled { return }
-            store.setMeta("codex_backfill_v1", "\(observations.count)")
+            store.setMeta("codex_backfill_v1", "\(inserted)")
             await MainActor.run { [weak self] in
                 self?.backfillTask = nil
                 self?.invalidateHistory()
             }
         }
+    }
+
+    /// Local observations carry the identity of the account the Codex CLI is
+    /// currently signed in as. Without credentials they stay unattributed, and
+    /// the store treats that as "any account" rather than merging silently.
+    private func localAccountRef() -> String? {
+        accountRef(readCodexCreds()?.accountId)
     }
 
     // MARK: presentation

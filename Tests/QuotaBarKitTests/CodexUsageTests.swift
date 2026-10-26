@@ -128,6 +128,24 @@ final class CodexUsageTests: XCTestCase {
         XCTAssertEqual(observations.count, 1, "identical snapshots are deduplicated")
     }
 
+    func testLocalLogRejectsInvalidTimestamps() throws {
+        let root = try makeSession(lines: [
+            #"{"type":"event_msg","payload":{"type":"token_count","rate_limits":{"primary":{"used_percent":9,"window_minutes":300}}}}"#,
+            #"{"timestamp":"not-a-date","type":"event_msg","payload":{"type":"token_count","rate_limits":{"primary":{"used_percent":9,"window_minutes":300}}}}"#,
+        ])
+        XCTAssertNil(CodexLocalLog.latest(root: root))
+        XCTAssertTrue(CodexLocalLog.observations(since: .distantPast, root: root).isEmpty)
+    }
+
+    func testLocalLogFiltersByRecordTimestampNotFileAge() throws {
+        let root = try makeSession(lines: [
+            tokenCountLine(at: "2026-10-26T10:05:00.000Z", primary: 14, secondary: 3),
+        ])
+        // File mtime is "now" and passes the prefilter, but the record is old.
+        let cutoff = ISO8601DateFormatter().date(from: "2026-10-26T12:00:00Z")!
+        XCTAssertTrue(CodexLocalLog.observations(since: cutoff, root: root).isEmpty)
+    }
+
     func testLocalLogSinceFiltersOldFiles() throws {
         let root = try makeSession(lines: [
             tokenCountLine(at: "2026-10-26T10:05:00.000Z", primary: 14, secondary: 3),
@@ -136,4 +154,74 @@ final class CodexUsageTests: XCTestCase {
         XCTAssertTrue(CodexLocalLog.observations(since: future, root: root).isEmpty)
         XCTAssertEqual(CodexLocalLog.observations(since: .distantPast, root: root).count, 1)
     }
+}
+
+// MARK: - Outgoing request construction
+
+final class ProbeRequestTests: XCTestCase {
+    func testGoRequestUsesBearerAuthorizationHeader() {
+        let request = QuotaProbes.goRequest(key: "test-key")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer test-key")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Accept"), "application/json")
+        XCTAssertNil(request.value(forHTTPHeaderField: "Bearer test-key"),
+                     "the credential must never be used as a header name")
+    }
+
+    func testCodexRequestUsesBearerAndAccountHeaders() {
+        let request = QuotaProbes.codexRequest(token: "tok-123", accountId: "acct-1")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer tok-123")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "ChatGPT-Account-Id"), "acct-1")
+        XCTAssertNil(request.value(forHTTPHeaderField: "Bearer tok-123"))
+    }
+
+    func testCodexRequestOmitsEmptyAccountHeader() {
+        let request = QuotaProbes.codexRequest(token: "tok", accountId: "")
+        XCTAssertNil(request.value(forHTTPHeaderField: "ChatGPT-Account-Id"))
+    }
+
+    func testCodexProbeSendsHeadersToTheWire() async throws {
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer tok-wire")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "ChatGPT-Account-Id"), "acct-wire")
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!,
+                    Data("""
+                    {"plan_type":"plus","rate_limit":{"primary_window":{"used_percent":11,"limit_window_seconds":18000},
+                     "secondary_window":{"used_percent":2,"limit_window_seconds":604800}}}
+                    """.utf8))
+        }
+        defer { MockURLProtocol.handler = nil }
+
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [MockURLProtocol.self]
+        let probes = QuotaProbes(session: URLSession(configuration: config))
+        let result = await probes.codex(credentials: CodexCreds(token: "tok-wire", accountId: "acct-wire"))
+
+        guard case let .ok(snapshot) = result else {
+            return XCTFail("expected ok, got \(result)")
+        }
+        XCTAssertEqual(snapshot.provider, .codex)
+        XCTAssertEqual(snapshot.plan, "plus")
+        XCTAssertEqual(snapshot.windows.first?.percent, 11)
+        XCTAssertEqual(snapshot.accountRef, accountRef("acct-wire"))
+    }
+}
+
+final class MockURLProtocol: URLProtocol {
+    static var handler: ((URLRequest) -> (HTTPURLResponse, Data))?
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        guard let handler = Self.handler else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badServerResponse))
+            return
+        }
+        let (response, data) = handler(request)
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: data)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
 }

@@ -42,13 +42,18 @@ public struct QuotaProbes {
         return .failed(Self.health(for: lastState), Self.message(for: lastState))
     }
 
-    /// Used by key-entry validation; returns the raw Go state so copy stays specific.
-    public func fetchGo(key: String, source: String) async -> GoFetchState {
+    public static func goRequest(key: String) -> URLRequest {
         var req = URLRequest(url: URL(string: "https://opencode.ai/zen/go/v1/usage")!)
         req.httpMethod = "GET"
-        req.setValue("Authorization", forHTTPHeaderField: "Bearer \(key)")
+        req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         req.setValue("application/json", forHTTPHeaderField: "Accept")
         req.timeoutInterval = 15
+        return req
+    }
+
+    /// Used by key-entry validation; returns the raw Go state so copy stays specific.
+    public func fetchGo(key: String, source: String) async -> GoFetchState {
+        let req = Self.goRequest(key: key)
         let data: Data
         let status: Int
         do {
@@ -121,34 +126,42 @@ public struct QuotaProbes {
 
     // MARK: Codex
 
-    public func codex(now: Date = Date()) async -> ProbeResult {
-        guard let creds = readCodexCreds() else {
+    public static func codexRequest(token: String, accountId: String?) -> URLRequest {
+        var req = URLRequest(url: URL(string: "https://chatgpt.com/backend-api/wham/usage")!)
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        if let accountId, !accountId.isEmpty {
+            req.setValue(accountId, forHTTPHeaderField: "ChatGPT-Account-Id")
+        }
+        req.timeoutInterval = 15
+        return req
+    }
+
+    public func codex(now: Date = Date(), credentials: CodexCreds? = nil) async -> ProbeResult {
+        guard let creds = credentials ?? readCodexCreds() else {
             return .failed(.noCredentials, "No token in ~/.codex/auth.json.")
         }
-        var req = URLRequest(url: URL(string: "https://chatgpt.com/backend-api/wham/usage")!)
-        req.setValue("Authorization", forHTTPHeaderField: "Bearer \(creds.token)")
-        if let aid = creds.accountId { req.setValue(aid, forHTTPHeaderField: "ChatGPT-Account-Id") }
-        req.timeoutInterval = 15
+        let ref = accountRef(creds.accountId)
+        let req = Self.codexRequest(token: creds.token, accountId: creds.accountId)
 
         let data: Data
         let status: Int
         do {
             let (d, resp) = try await session.data(for: req)
             guard let http = resp as? HTTPURLResponse else {
-                return Self.codexFallback(state: .badResponse, message: "Unexpected response.")
+                return Self.codexFallback(state: .badResponse, message: "Unexpected response.", accountRef: ref)
             }
             data = d
             status = http.statusCode
         } catch {
-            return Self.codexFallback(state: .offline, message: "Can't reach chatgpt.com.")
+            return Self.codexFallback(state: .offline, message: "Can't reach chatgpt.com.", accountRef: ref)
         }
 
         guard status == 200 else {
             switch status {
-            case 401: return Self.codexFallback(state: .authFailed, message: "Codex token rejected (401). Sign in again with the Codex CLI.")
-            case 429: return Self.codexFallback(state: .rateLimited, message: "ChatGPT is rate limiting (429).")
-            case 500...599: return Self.codexFallback(state: .providerDown, message: "ChatGPT is having issues (\(status)).")
-            default: return Self.codexFallback(state: .badResponse, message: "Unexpected response (HTTP \(status)).")
+            case 401: return Self.codexFallback(state: .authFailed, message: "Codex token rejected (401). Sign in again with the Codex CLI.", accountRef: ref)
+            case 429: return Self.codexFallback(state: .rateLimited, message: "ChatGPT is rate limiting (429).", accountRef: ref)
+            case 500...599: return Self.codexFallback(state: .providerDown, message: "ChatGPT is having issues (\(status)).", accountRef: ref)
+            default: return Self.codexFallback(state: .badResponse, message: "Unexpected response (HTTP \(status)).", accountRef: ref)
             }
         }
 
@@ -165,18 +178,20 @@ public struct QuotaProbes {
                 provider: .codex,
                 windows: report.windows,
                 plan: report.plan,
-                accountRef: report.accountRef ?? accountRef(creds.accountId),
+                // Prefer the CLI account identity so live and local-log rows
+                // share one namespace (they can diverge on workspace ids).
+                accountRef: ref ?? report.accountRef,
                 origin: .network,
                 source: "chatgpt.com/backend-api/wham/usage",
                 observedAt: now,
                 facts: facts
             ))
         } catch {
-            return Self.codexFallback(state: .badResponse, message: "Unreadable response from chatgpt.com.")
+            return Self.codexFallback(state: .badResponse, message: "Unreadable response from chatgpt.com.", accountRef: ref)
         }
     }
 
-    static func codexFallback(state: HealthState, message: String) -> ProbeResult {
+    static func codexFallback(state: HealthState, message: String, accountRef: String? = nil) -> ProbeResult {
         guard let local = CodexLocalLog.latest() else {
             return .failed(state, message)
         }
@@ -184,7 +199,7 @@ public struct QuotaProbes {
             provider: .codex,
             windows: local.windows,
             plan: local.plan,
-            accountRef: nil,
+            accountRef: accountRef,
             origin: .localLog,
             source: "Codex local session log",
             observedAt: local.observedAt

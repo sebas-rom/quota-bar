@@ -188,6 +188,9 @@ public enum CodexLocalLog {
                 guard out.count < limit else { break }
                 guard line.contains("\"token_count\"") else { continue }
                 guard let obs = observation(fromLine: String(line)) else { continue }
+                // File mtime is only a cheap prefilter; the record itself must
+                // fall inside the requested window.
+                guard obs.observedAt >= since else { continue }
                 let key = "\(obs.observedAt.timeIntervalSince1970)|\(obs.windows.map(\.id).joined(separator: ","))"
                 if seen.insert(key).inserted { out.append(obs) }
             }
@@ -205,7 +208,8 @@ public enum CodexLocalLog {
               payload["type"] as? String == "token_count",
               let rl = payload["rate_limits"] as? [String: Any] else { return nil }
 
-        let stamp = (obj["timestamp"] as? String).flatMap(parseGoDate) ?? Date()
+        guard let stampText = obj["timestamp"] as? String,
+              let stamp = parseGoDate(stampText) else { return nil }
         var windows: [QuotaWindow] = []
 
         func append(_ raw: Any?, id: String, kind: WindowKind, fallback: String) {

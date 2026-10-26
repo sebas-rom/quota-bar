@@ -251,24 +251,26 @@ struct WindowChartCard: View {
 
     private var chart: some View {
         let now = Date()
-        return Chart(points) { point in
-            AreaMark(
-                x: .value("Time", point.at),
-                y: .value("Used", point.percent)
-            )
-            .foregroundStyle(LinearGradient(
-                colors: [color.opacity(0.28), color.opacity(0.02)],
-                startPoint: .top, endPoint: .bottom
-            ))
-            .interpolationMethod(.monotone)
+        return Chart {
+            ForEach(points) { point in
+                AreaMark(
+                    x: .value("Time", point.at),
+                    y: .value("Used", point.percent)
+                )
+                .foregroundStyle(LinearGradient(
+                    colors: [color.opacity(0.28), color.opacity(0.02)],
+                    startPoint: .top, endPoint: .bottom
+                ))
+                .interpolationMethod(.monotone)
 
-            LineMark(
-                x: .value("Time", point.at),
-                y: .value("Used", point.percent)
-            )
-            .foregroundStyle(color)
-            .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
-            .interpolationMethod(.monotone)
+                LineMark(
+                    x: .value("Time", point.at),
+                    y: .value("Used", point.percent)
+                )
+                .foregroundStyle(color)
+                .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+                .interpolationMethod(.monotone)
+            }
             if let last = points.last {
                 PointMark(
                     x: .value("Time", last.at),

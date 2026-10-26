@@ -172,3 +172,43 @@ final class QuotaModelHistoryTests: XCTestCase {
                        "cleared history must not be re-imported by the one-time backfill")
     }
 }
+
+final class CodexBackfillTests: XCTestCase {
+    func testImportStopsWhenCancelled() throws {
+        let store = try TelemetryStore.inMemory()
+        defer { store.close() }
+        let now = Date()
+        let observations = (0..<10).map { index in
+            CodexLogObservation(
+                observedAt: now.addingTimeInterval(-Double(index) * 300),
+                plan: "plus",
+                windows: [QuotaWindow(id: "codex.primary", kind: .primary, label: "5-hour",
+                                      percent: Double(index), resetsAt: nil,
+                                      windowMinutes: 300, isLimited: false)]
+            )
+        }
+
+        var checks = 0
+        let inserted = CodexBackfill.importObservations(observations, into: store, accountRef: "acct") {
+            checks += 1
+            return checks > 3
+        }
+
+        XCTAssertEqual(inserted, 3)
+        XCTAssertEqual(store.count(), 3)
+    }
+
+    func testImportIsIdempotentAndAccountTagged() throws {
+        let store = try TelemetryStore.inMemory()
+        defer { store.close() }
+        let observation = CodexLogObservation(
+            observedAt: Date(), plan: "plus",
+            windows: [QuotaWindow(id: "codex.primary", kind: .primary, label: "5-hour",
+                                  percent: 5, resetsAt: nil, windowMinutes: 300, isLimited: false)]
+        )
+        XCTAssertEqual(CodexBackfill.importObservations([observation], into: store, accountRef: "acct"), 1)
+        XCTAssertEqual(CodexBackfill.importObservations([observation], into: store, accountRef: "acct"), 0)
+        XCTAssertEqual(store.series(provider: .codex, windowID: "codex.primary",
+                                    since: .distantPast, accountRef: "acct").count, 1)
+    }
+}
