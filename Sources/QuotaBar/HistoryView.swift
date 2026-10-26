@@ -329,14 +329,17 @@ struct WindowChartCard: View {
             guard var cursor = calendar.dateInterval(of: .hour, for: start)?.start else { return [] }
             let hour = calendar.component(.hour, from: cursor)
             cursor = cursor.addingTimeInterval(Double((6 - hour % 6) % 6) * 3_600)
-            while cursor < now.addingTimeInterval(-2_400) {
+            if cursor < start { cursor = cursor.addingTimeInterval(6 * 3_600) }
+            // Keep the last label far enough from the plot edge to render fully.
+            while cursor < now.addingTimeInterval(-2 * 3_600) {
                 dates.append(cursor)
                 cursor = cursor.addingTimeInterval(6 * 3_600)
             }
         } else {
             guard var cursor = calendar.dateInterval(of: .day, for: start)?.start else { return [] }
             cursor = cursor.addingTimeInterval(86_400)
-            while cursor < now.addingTimeInterval(-3_600) {
+            if cursor < start { cursor = cursor.addingTimeInterval(86_400) }
+            while cursor < now.addingTimeInterval(-12 * 3_600) {
                 dates.append(cursor)
                 cursor = cursor.addingTimeInterval(86_400)
             }

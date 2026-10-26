@@ -62,4 +62,7 @@ the narrowest supported presentation; the History window has a 520 pt minimum.
   last successful observation age.
 - Open History, switch 24h ↔ 7d, close and reopen: window state and range reset
   to 24h by design.
-- Clear History: charts empty, live quota still shown.
+- Clear History: charts empty, live quota still shown; relaunch and go offline —
+  the cleared history must stay empty (deletion cutoff + local-log rejection).
+- Quit and relaunch with the popover never opened: history still advances after
+  five minutes (sampler is app-owned).
