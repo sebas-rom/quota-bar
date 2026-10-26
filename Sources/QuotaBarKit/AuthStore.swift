@@ -69,10 +69,10 @@ public func goKeyCandidates() -> [KeyCandidate] {
     let override = homeDir().appendingPathComponent(".config/quota-bar/opencode-go.json")
     if let data = try? Data(contentsOf: override),
        let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-        add(override.path, obj["apiKey"] as? String)
+        add("config file", obj["apiKey"] as? String)
     }
     let env = ProcessInfo.processInfo.environment
-    add("OPENCODE_GO_API_KEY", env["OPENCODE_GO_API_KEY"])
+    add("env var", env["OPENCODE_GO_API_KEY"])
     var authPaths: [URL] = []
     if let xdg = env["XDG_DATA_HOME"], !xdg.isEmpty {
         authPaths.append(URL(fileURLWithPath: NSString(string: xdg).expandingTildeInPath).appendingPathComponent("opencode/auth.json"))

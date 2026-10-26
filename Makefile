@@ -24,6 +24,9 @@ zip: app
 clean:
 	rm -rf .build $(BUNDLE) $(ZIP)
 
+evidence: app
+	./scripts/capture-ui.sh
+
 verify:
 	swift build -c release 2>&1 | tail -5
 	test -x $(BIN) && echo "BINARY-OK"

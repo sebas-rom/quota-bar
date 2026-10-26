@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>QuotaBar — opencode-go + Codex quotas in your menu bar</title>
-<meta name="description" content="Minimal native macOS menu-bar for opencode-go + Codex quotas. SwiftUI, local-first, accessible.">
+<meta name="description" content="Native macOS menu-bar for opencode-go + Codex quotas, with 24-hour trends and local history. SwiftUI, local-first, accessible.">
 <style>
 :root{color-scheme:light dark}
 *{box-sizing:border-box}
@@ -34,7 +34,7 @@ footer{margin-top:56px;font-size:13px;opacity:.6}
 <div class="wrap">
 <div class="menubar"><span class="pill">Go 83% &middot; Cx 20%</span></div>
 <h1>QuotaBar</h1>
-<p class="sub">Your opencode-go + Codex quotas, one glance away. Native macOS menu bar. Local-first. Accessible.</p>
+<p class="sub">Your opencode-go + Codex quotas, trends and history. Native macOS menu bar. Local-first. Accessible.</p>
 <div class="cta">
 <a class="btn primary" href="https://github.com/sebas-rom/quota-bar/releases/latest">Download QuotaBar.zip</a>
 <a class="btn ghost" href="https://github.com/sebas-rom/quota-bar">GitHub</a>
@@ -55,10 +55,12 @@ footer{margin-top:56px;font-size:13px;opacity:.6}
 <li>Drag <code>QuotaBar.app</code> to <code>/Applications</code> and launch.</li>
 <li>Toggle <strong>Launch at login</strong> in the &#8943; menu. No account setup needed if your keys are already on disk.</li>
 </ol>
+<h2>History, not just a snapshot</h2>
+<p>QuotaBar samples every five minutes in the background and keeps 90 days locally. The History window charts each quota window on a fixed 0&ndash;100 scale for 24 hours or 7 days. If a provider is unreachable, the last good reading stays visible with its age instead of disappearing.</p>
 <h2>Missing your Go key?</h2>
 <p>Click <strong>Enter API key…</strong> in the menu, paste your opencode Personal API key — it's validated live and kept in your Mac's Keychain. Remove it anytime; your OpenCode/Codex credentials are never touched.</p>
 <h2>Privacy</h2>
-<p>Local-only. QuotaBar talks directly to the opencode.ai and ChatGPT usage endpoints with tokens already on your machine. No third-party servers, no analytics, no tracking. <a href="https://github.com/sebas-rom/quota-bar/blob/main/SECURITY.md">Security policy</a>.</p>
+<p>Local-only. QuotaBar talks directly to the opencode.ai and ChatGPT usage endpoints with tokens already on your machine, and keeps quota observations in a local SQLite file (90 days, delete anytime). No prompts, tokens or account ids are stored. No third-party servers, no analytics, no tracking. <a href="https://github.com/sebas-rom/quota-bar/blob/main/SECURITY.md">Security policy</a>.</p>
 <h2>Contribute</h2>
 <p>All changes via pull request — <code>main</code> is protected and every change needs maintainer approval. Start with <a href="https://github.com/sebas-rom/quota-bar/blob/main/CONTRIBUTING.md">CONTRIBUTING.md</a>.</p>
 <footer>MIT licensed &middot; QuotaBar is an independent project, not affiliated with OpenCode or OpenAI.</footer>

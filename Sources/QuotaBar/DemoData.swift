@@ -1,0 +1,147 @@
+import SwiftUI
+import AppKit
+import QuotaBarKit
+
+// MARK: - Demo harness (--demo)
+//
+// Renders the real views with synthetic, clearly-labelled data so screenshots
+// and manual review never depend on a live provider state. Never used by the
+// shipped flow: the app only enters this path when launched with --demo.
+
+enum DemoData {
+    @MainActor static func seed(_ model: QuotaModel) {
+        let now = Date()
+        guard let store = model.store else { return }
+
+        let goRollingReset = now.addingTimeInterval(3_073)       // 74% right now
+        let codexPrimaryReset = now.addingTimeInterval(12_600)   // 22% right now
+
+        func saw(_ t: Date, end: Date, windowSeconds: Double, base: Double, amp: Double) -> Double {
+            let back = max(0, now.timeIntervalSince(t))
+            let cycles = floor(back / windowSeconds)
+            let windowEnd = end.addingTimeInterval(-cycles * windowSeconds)
+            let remaining = windowEnd.timeIntervalSince(t)
+            let phase = 1 - remaining / windowSeconds
+            return min(99, base + amp * min(max(phase, 0), 1))
+        }
+
+        func linear(_ t: Date, from: Double, to: Double) -> Double {
+            let span = 24 * 3_600.0
+            let progress = min(max(1 - now.timeIntervalSince(t) / span, 0), 1)
+            return from + (to - from) * progress
+        }
+
+        struct Series {
+            let id: String
+            let label: String
+            let provider: ProviderID
+            let minutes: Int
+            let reset: Date
+            let percent: (Date) -> Double
+        }
+
+        let series: [Series] = [
+            Series(id: "go.rolling", label: "5-hour", provider: .go, minutes: 300, reset: goRollingReset) { t in
+                saw(t, end: goRollingReset, windowSeconds: 18_000, base: 6, amp: 82)
+            },
+            Series(id: "go.weekly", label: "Weekly", provider: .go, minutes: 10_080, reset: now.addingTimeInterval(3 * 86_400 + 4 * 3_600)) { t in
+                linear(t, from: 30, to: 38)
+            },
+            Series(id: "go.monthly", label: "Monthly", provider: .go, minutes: 43_200, reset: now.addingTimeInterval(12 * 86_400)) { t in
+                linear(t, from: 57, to: 61)
+            },
+            Series(id: "codex.primary", label: "5-hour", provider: .codex, minutes: 300, reset: codexPrimaryReset) { t in
+                saw(t, end: codexPrimaryReset, windowSeconds: 18_000, base: 4, amp: 60)
+            },
+            Series(id: "codex.secondary", label: "Weekly", provider: .codex, minutes: 10_080, reset: now.addingTimeInterval(4 * 86_400 + 6 * 3_600)) { t in
+                linear(t, from: 7, to: 9)
+            },
+        ]
+
+        // 24 hours of five-minute samples.
+        let sampleCount = 288
+        for index in 0..<sampleCount {
+            let t = now.addingTimeInterval(-Double(sampleCount - 1 - index) * 300)
+            for s in series {
+                let snapshot = ProviderSnapshot(
+                    provider: s.provider,
+                    windows: [QuotaWindow(
+                        id: s.id, kind: .primary, label: s.label,
+                        percent: s.percent(t), resetsAt: nil,
+                        windowMinutes: s.minutes, isLimited: false
+                    )],
+                    plan: s.provider == .codex ? "plus" : nil,
+                    origin: .demo,
+                    source: "demo data",
+                    observedAt: t
+                )
+                _ = store.insert(snapshot)
+            }
+        }
+
+        let goSnapshot = ProviderSnapshot(
+            provider: .go,
+            windows: [
+                QuotaWindow(id: "go.rolling", kind: .rolling, label: "5-hour",
+                            percent: 74, resetsAt: goRollingReset, windowMinutes: 300, isLimited: false),
+                QuotaWindow(id: "go.weekly", kind: .weekly, label: "Weekly",
+                            percent: 38, resetsAt: now.addingTimeInterval(3 * 86_400 + 4 * 3_600), windowMinutes: 10_080, isLimited: false),
+                QuotaWindow(id: "go.monthly", kind: .monthly, label: "Monthly",
+                            percent: 61, resetsAt: now.addingTimeInterval(12 * 86_400), windowMinutes: 43_200, isLimited: false),
+            ],
+            plan: nil,
+            origin: .demo,
+            source: "opencode.ai/zen/go/v1/usage",
+            observedAt: now.addingTimeInterval(-120)
+        )
+
+        let codexSnapshot = ProviderSnapshot(
+            provider: .codex,
+            windows: [
+                QuotaWindow(id: "codex.primary", kind: .primary, label: "5-hour",
+                            percent: 22, resetsAt: codexPrimaryReset, windowMinutes: 300, isLimited: false),
+                QuotaWindow(id: "codex.secondary", kind: .secondary, label: "Weekly",
+                            percent: 9, resetsAt: now.addingTimeInterval(4 * 86_400 + 6 * 3_600), windowMinutes: 10_080, isLimited: false),
+            ],
+            plan: "plus",
+            origin: .demo,
+            source: "chatgpt.com/backend-api/wham/usage",
+            observedAt: now.addingTimeInterval(-40),
+            facts: ["2 reset credits"]
+        )
+
+        model.ingestDemo(goSnapshot)
+        model.ingestDemo(codexSnapshot)
+        model.invalidateHistory()
+    }
+}
+
+@MainActor
+final class DemoHost {
+    static let shared = DemoHost()
+    private var popover: NSPopover?
+    private var anchor: NSWindow?
+
+    func present(model: QuotaModel) {
+        guard let screen = NSScreen.main else { return }
+
+        let anchorRect = NSRect(x: screen.frame.minX + 120, y: screen.frame.maxY - 1, width: 1, height: 1)
+        let anchor = NSWindow(contentRect: anchorRect, styleMask: [.borderless], backing: .buffered, defer: false)
+        anchor.isOpaque = false
+        anchor.backgroundColor = .clear
+        anchor.orderFrontRegardless()
+        self.anchor = anchor
+
+        let popover = NSPopover()
+        popover.behavior = .applicationDefined
+        popover.animates = false
+        let host = NSHostingController(rootView: PopoverView(model: model, launchAtLogin: .constant(false)))
+        host.view.layoutSubtreeIfNeeded()
+        popover.contentSize = host.view.fittingSize
+        popover.contentViewController = host
+        popover.show(relativeTo: anchor.contentView!.bounds, of: anchor.contentView!, preferredEdge: .minY)
+        self.popover = popover
+
+        HistoryWindowController.shared.show(model: model)
+    }
+}
