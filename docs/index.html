@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>QuotaBar — opencode-go + Codex quotas in your menu bar</title>
+<meta name="description" content="Minimal native macOS menu-bar for opencode-go + Codex quotas. SwiftUI, local-first, accessible.">
+<style>
+:root{color-scheme:light dark}
+*{box-sizing:border-box}
+body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",Inter,Helvetica,Arial,sans-serif;line-height:1.55}
+.wrap{max-width:720px;margin:0 auto;padding:48px 20px 64px}
+.menubar{display:flex;justify-content:center;margin-bottom:28px}
+.pill{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:15px;background:#1c1c1e;color:#f5f5f7;border-radius:999px;padding:8px 18px}
+h1{font-size:34px;letter-spacing:-.02em;margin:.2em 0}
+.sub{font-size:18px;opacity:.75;margin-top:0}
+.cta{display:flex;gap:12px;margin:28px 0;flex-wrap:wrap}
+.btn{display:inline-block;padding:12px 22px;border-radius:10px;text-decoration:none;font-weight:600}
+.primary{background:#0071e3;color:#fff}
+.ghost{border:1px solid currentColor}
+.mock{border-radius:14px;padding:18px;margin:28px 0;background:rgba(120,120,128,.16)}
+.mock .row{display:flex;justify-content:space-between;font-size:14px;margin:6px 0}
+.mock .bar{height:6px;border-radius:3px;background:rgba(120,120,128,.35);margin:2px 0 8px;overflow:hidden}
+.mock .fill{height:100%;border-radius:3px}
+.cap{font-size:12px;opacity:.6}
+h2{margin-top:44px;font-size:22px}
+code{background:rgba(120,120,128,.2);border-radius:6px;padding:2px 6px;font-size:.9em}
+pre{background:rgba(120,120,128,.14);border-radius:10px;padding:14px;overflow:auto;font-size:13px}
+ul{padding-left:22px}
+footer{margin-top:56px;font-size:13px;opacity:.6}
+</style>
+</head>
+<body>
+<div class="wrap">
+<div class="menubar"><span class="pill">Go 83% &middot; Cx 20%</span></div>
+<h1>QuotaBar</h1>
+<p class="sub">Your opencode-go + Codex quotas, one glance away. Native macOS menu bar. Local-first. Accessible.</p>
+<div class="cta">
+<a class="btn primary" href="https://github.com/sebas-rom/quota-bar/releases/latest">Download QuotaBar.zip</a>
+<a class="btn ghost" href="https://github.com/sebas-rom/quota-bar">GitHub</a>
+</div>
+<div class="mock" aria-label="Illustrated preview of the QuotaBar dropdown">
+<div class="row"><strong>&#9679; OpenCode Go</strong><span>30d &middot; 83%</span></div>
+<div class="row"><span>5-hour</span><span>13%</span></div><div class="bar"><div class="fill" style="width:13%;background:#30d158"></div></div>
+<div class="row"><span>Weekly</span><span>45%</span></div><div class="bar"><div class="fill" style="width:45%;background:#30d158"></div></div>
+<div class="row"><span>Monthly</span><span>83%</span></div><div class="bar"><div class="fill" style="width:83%;background:#ff9f0a"></div></div>
+<div class="row"><strong>&#9679; Codex</strong><span>plus</span></div>
+<div class="row"><span>Primary</span><span>20%</span></div><div class="bar"><div class="fill" style="width:20%;background:#30d158"></div></div>
+<div class="row"><span>Secondary</span><span>3%</span></div><div class="bar"><div class="fill" style="width:3%;background:#30d158"></div></div>
+<div class="cap">Illustrated preview — actual UI is native SwiftUI and adapts to light/dark mode.</div>
+</div>
+<h2>Install</h2>
+<ol>
+<li>Download <code>QuotaBar.zip</code> from <a href="https://github.com/sebas-rom/quota-bar/releases/latest">releases</a>.</li>
+<li>Drag <code>QuotaBar.app</code> to <code>/Applications</code> and launch.</li>
+<li>Toggle <strong>Launch at login</strong> in the &#8943; menu. No account setup needed if your keys are already on disk.</li>
+</ol>
+<h2>Missing your Go key?</h2>
+<p>Click <strong>Enter API key…</strong> in the menu, paste your opencode Personal API key — it's validated live and kept in your Mac's Keychain. Remove it anytime; your OpenCode/Codex credentials are never touched.</p>
+<h2>Privacy</h2>
+<p>Local-only. QuotaBar talks directly to the opencode.ai and ChatGPT usage endpoints with tokens already on your machine. No third-party servers, no analytics, no tracking. <a href="https://github.com/sebas-rom/quota-bar/blob/main/SECURITY.md">Security policy</a>.</p>
+<h2>Contribute</h2>
+<p>All changes via pull request — <code>main</code> is protected and every change needs maintainer approval. Start with <a href="https://github.com/sebas-rom/quota-bar/blob/main/CONTRIBUTING.md">CONTRIBUTING.md</a>.</p>
+<footer>MIT licensed &middot; QuotaBar is an independent project, not affiliated with OpenCode or OpenAI.</footer>
+</div>
+</body>
+</html>
