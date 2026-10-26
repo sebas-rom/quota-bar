@@ -1,8 +1,9 @@
-# QuotaBar — minimal macOS menu bar for opencode-go + Codex
+# QuotaBar — minimal menu bar for opencode-go + Codex
 
-MIT. Single Swift file. Local-auth only, no keychain scraping, no browser automation.
+MIT. Native SwiftUI, local-first. No browser scraping, no keychain scraping.
 
-Menu shows e.g. `Go 34% · Cx 61%`. Click for 5h / weekly / monthly + plan + refresh.
+Menu shows e.g. `Go 85% · Cx 20%`. Click for two provider cards with per-window
+percentages, progress bars, reset countdowns, and footer actions.
 
 ## Uninstalling old OpenCode Bar
 
@@ -14,51 +15,46 @@ rm -f ~/Library/Preferences/com.copilotmonitor.CopilotMonitor.plist
 rm -rf ~/Library/Caches/com.copilotmonitor.* ~/Library/Application\ Support/CopilotMonitor
 ```
 
-## Data sources (read-only, files already on disk)
+## Data sources (read-only, except the key you choose to save)
 
-| Slot | File | Call |
+| Slot | Source | Call |
 |---|---|---|
-| opencode-go | `~/.local/share/opencode/auth.json` → `opencode-go.key` | `GET https://opencode.ai/zen/go/v1/models` (key check + model count) |
-| opencode-go % | optional `~/.config/quota-bar/opencode-go.json` `{workspaceId, authCookie}` or `OPENCODE_GO_WORKSPACE_ID` + `OPENCODE_GO_AUTH_COOKIE` | `GET https://opencode.ai/workspace/<id>/go` → parses `rollingUsage` / `weeklyUsage` / `monthlyUsage` |
+| opencode-go | Keychain (entered in-app) → `~/.config/quota-bar/opencode-go.json` `{"apiKey"}` → `$OPENCODE_GO_API_KEY` → opencode `auth.json` `opencode-go` entry | `GET https://opencode.ai/zen/go/v1/usage` |
 | Codex | `~/.codex/auth.json` → `tokens.access_token` (+ `account_id`) | `GET https://chatgpt.com/backend-api/wham/usage` |
 
-No creds without workspace linkage: Go shows `key OK (N models) · link dashboard for %`. That keeps v1 extremely simple — dashboard HTML parsing is the only fragile part, isolated to one function.
+No working Go key anywhere? The menu offers **Enter API key…**: paste your
+opencode Personal API key, it validates against `/usage` immediately, and on
+success stores it in **macOS Keychain** (`com.quota.bar`). Forget it anytime
+via **Forget saved API key**. Nothing is ever logged; only presence/source is shown.
 
-Optional dashboard link file:
+Go states are explicit: ready (5h/7d/30d + resets), no key, rejected 401,
+no-subscription 403, rate-limited 429, provider 5xx, offline, unexpected.
+The headline always shows the most-consumed window (e.g. `Go 85% · 5h`);
+`rate-limited` counts as a real quota state, missing windows are never shown as 0%.
 
-```json
-{ "workspaceId": "wrk_ABC…", "authCookie": "auth=…" }
-```
-
-Get the cookie by visiting `opencode.ai/workspace/<id>/go` once in Chrome and copying the `auth` cookie. Env vars work too.
-
-## Build / run
+## Build / run / test
 
 Requires macOS 13+, Xcode 15+ / Swift 5.9+.
 
 ```sh
-make app   # -> QuotaBar.app (LSUIElement, menu-bar only)
-make run   # launch
-make zip   # -> QuotaBar.zip (shareable)
+swift test   # mocked parser + taxonomy tests
+make app     # -> QuotaBar.app (LSUIElement, menu-bar only)
+make run     # launch
+make zip     # -> QuotaBar.zip (shareable)
 ```
 
-Auto-refresh: on open + every 5 min (add a Timer in `QuotaBarApp.swift` if you want background polling; v1 refreshes on open + ⌘R).
+Auto-refresh every 5 min + ⌘R. Launch-at-login toggle in the footer (SMAppService).
 
 ## Open-source + downloadable
 
-1. `git init && git add -A && git commit -m "v0.1.0" && gh repo create quota-bar --public --source=. --push`
-2. Tag `v0.1.0` → `.github/workflows/release.yml` builds `QuotaBar.zip` and attaches it to the GitHub Release.
-3. (Optional) Homebrew tap:
-   ```ruby
-   cask "quota-bar" do
-     version "0.1.0"
-     url "https://github.com/YOU/quota-bar/releases/download/v0.1.0/QuotaBar.zip"
-     app "QuotaBar.app"
-   end
-   ```
+1. `git init && git add -A && git commit -m "v0.2.0" && gh repo create quota-bar --public --source=. --push`
+2. Tag `v0.2.0` → `.github/workflows/release.yml` builds `QuotaBar.zip` on the GitHub Release.
+3. (Optional) Homebrew cask snippet in a later release.
+
+Personal/beta = unsigned ZIP, labeled as such. Public distribution = Developer ID
++ notarization first (deferred).
 
 ## Limits
 
-- Go % needs workspace cookie; without it you get key-valid only (by design, simplest).
-- Codex uses ChatGPT OAuth token; API-key-only setups need an external usage endpoint (out of scope for v1).
+- Codex uses the ChatGPT OAuth token; API-key-only setups need an external usage endpoint (out of scope for v1).
 - No Sparkle auto-update in v1 — re-download the zip.
