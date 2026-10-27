@@ -9,7 +9,7 @@ import QuotaBarKit
 // Popover: current windows, 24h trend, provenance and freshness.
 // History: a real window with range charts over the local observation store.
 
-private let appVersion = "0.5.2"
+private let appVersion = "0.6.0"
 
 @MainActor
 enum AppEnvironment {
@@ -202,7 +202,11 @@ struct PopoverView: View {
                     health: model.health[provider],
                     trend: trend(for: provider),
                     freshness: model.staleness(for: provider),
-                    onEnterKey: provider == .go ? { showKeyEntry = true } : nil
+                    onEnterKey: provider == .go ? { showKeyEntry = true } : nil,
+                    forecastFor: { window in
+                        guard window.kind == .rolling else { return nil }
+                        return ForecastCopy.line(for: model.forecast(for: provider, window: window))
+                    }
                 )
             }
             if showKeyEntry { keyEntry }
@@ -398,6 +402,7 @@ struct ProviderCard: View {
     let trend: [SamplePoint]
     let freshness: String?
     let onEnterKey: (() -> Void)?
+    var forecastFor: (QuotaWindow) -> String? = { _ in nil }
 
     var body: some View {
         Card(
@@ -413,7 +418,8 @@ struct ProviderCard: View {
                         percent: window.percent,
                         reset: window.resetsAt,
                         flag: window.isLimited ? "limit reached" : nil,
-                        isLimiting: window.id == snapshot.limiting?.id
+                        isLimiting: window.id == snapshot.limiting?.id,
+                        forecast: forecastFor(window)
                     )
                 }
                 if trend.count >= 2 {

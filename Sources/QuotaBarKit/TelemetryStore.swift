@@ -202,6 +202,48 @@ public final class TelemetryStore: @unchecked Sendable {
         } ?? false
     }
 
+    /// Raw network observations for forecasting. Never mixes origins, and
+    /// honours the account scope used by the charts.
+    public func forecastSamples(
+        provider: ProviderID,
+        windowID: String,
+        since: Date,
+        accountRef: String? = nil
+    ) -> [ForecastSample] {
+        withLock { db in
+            let sql = """
+            SELECT observed_at, percent, resets_at, origin FROM sample
+            WHERE provider = ? AND window_id = ? AND observed_at >= ?
+              AND origin = 'network'
+              AND (? IS NULL OR account_ref = ? OR account_ref IS NULL)
+            ORDER BY observed_at ASC LIMIT 2000
+            """
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+            defer { sqlite3_finalize(stmt) }
+            bind(stmt, 1, provider.rawValue)
+            bind(stmt, 2, windowID)
+            sqlite3_bind_double(stmt, 3, since.timeIntervalSince1970)
+            if let accountRef { bind(stmt, 4, accountRef); bind(stmt, 5, accountRef) }
+            else { sqlite3_bind_null(stmt, 4); sqlite3_bind_null(stmt, 5) }
+
+            var out: [ForecastSample] = []
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                let reset: Date? = sqlite3_column_type(stmt, 2) == SQLITE_NULL
+                    ? nil
+                    : Date(timeIntervalSince1970: sqlite3_column_double(stmt, 2))
+                let origin = sqlite3_column_text(stmt, 3).map { String(cString: $0) } ?? "network"
+                out.append(ForecastSample(
+                    at: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 0)),
+                    percent: sqlite3_column_double(stmt, 1),
+                    resetsAt: reset,
+                    origin: SnapshotOrigin(rawValue: origin) ?? .network
+                ))
+            }
+            return out
+        } ?? []
+    }
+
     public func observedWindowIDs(provider: ProviderID) -> [String] {
         withLock { db in
             var stmt: OpaquePointer?

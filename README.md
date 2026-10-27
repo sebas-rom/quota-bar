@@ -15,6 +15,19 @@ you are looking at.
 
 ![Popover](docs/evidence/popover-light.png)
 
+## What's new in 0.6 — a conservative forecast
+
+Under each **5-hour** window, when there is enough recent data, QuotaBar adds one
+conditional line:
+
+- `At recent pace: ~50m to 95% · resets in 3h`
+- `At recent pace: below 95% until reset (~1h)`
+
+It is deliberately hard to earn: at least 7 fresh network samples over 30+
+minutes, no gap over 12 minutes, a stable reset boundary, a measurable rise of
+2+ points, a 15-minute reset margin, and a two-hour horizon. Otherwise it shows
+nothing. Forecasts never drive notifications, charts, or provider switching.
+
 ## What's new in 0.5 — identity + alerts
 
 - **Real identity.** A static two-meter mark in the menu bar (matching the app
