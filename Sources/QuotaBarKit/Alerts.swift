@@ -68,6 +68,27 @@ public struct AlertState: Codable, Equatable, Sendable {
     }
 }
 
+public enum AlertEngine {
+    /// Evaluates one snapshot and persists the dedupe state whenever it
+    /// changed — including a recovery transition, which produces no alert but
+    /// must still be stored or the next crossing is suppressed.
+    ///
+    /// Persistence is part of this call so a caller cannot skip it by returning
+    /// early on "no decisions".
+    @discardableResult
+    public static func run(
+        _ snapshot: ProviderSnapshot,
+        state: inout AlertState,
+        now: Date = Date(),
+        persist: (AlertState) -> Void
+    ) -> [AlertDecision] {
+        let previous = state
+        let decisions = AlertRules.evaluate(snapshot, state: &state, now: now)
+        if state != previous { persist(state) }
+        return decisions
+    }
+}
+
 public enum AlertRules {
     public static let warningThreshold: Double = 90
     /// A sliding window re-arms only after it actually recovers; a reset

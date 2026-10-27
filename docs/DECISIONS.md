@@ -42,7 +42,9 @@ Rolling windows therefore use a threshold **episode**: one 90% warning and one
 independent limit escalation per episode, re-armed only after usage falls below
 85%. Fixed-cycle windows keep the reset-bucket key. One classification
 (`WindowSemantics`) is shared by alerts, history and the popover so the surfaces
-cannot disagree.
+cannot disagree. Persistence is part of the evaluation call (`AlertEngine.run`),
+so a recovery transition is stored even when it produces no alert; otherwise the
+next crossing would stay suppressed after a restart.
 
 ## 2026-10-27 — Rolling vs fixed quota windows
 

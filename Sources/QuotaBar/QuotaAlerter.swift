@@ -105,9 +105,12 @@ final class QuotaAlerter: NSObject, ObservableObject, UNUserNotificationCenterDe
     func handle(_ snapshot: ProviderSnapshot, now: Date = Date()) {
         guard enabled, isEnabled(for: snapshot.provider), snapshot.origin == .network else { return }
         var state = loadState()
-        let decisions = AlertRules.evaluate(snapshot, state: &state, now: now)
+        // Recovery transitions produce no alert but still change dedupe state;
+        // AlertEngine persists every change so the next crossing re-arms.
+        let decisions = AlertEngine.run(snapshot, state: &state, now: now) { [weak self] in
+            self?.save($0)
+        }
         guard !decisions.isEmpty else { return }
-        save(state)
         pending.append(contentsOf: decisions)
         scheduleFlush()
     }

@@ -223,7 +223,7 @@ the store. No third-party servers, no analytics, no tracking.
 Requires macOS 13+, Xcode 15+ / Swift 5.9+.
 
 ```sh
-swift test          # parsers, store, cycles, forecasts, alerts, replay (110 tests)
+swift test          # parsers, store, cycles, forecasts, alerts, replay (114 tests)
 make app            # -> QuotaBar.app (LSUIElement, menu-bar only)
 make run            # launch
 make install        # build and replace /Applications/QuotaBar.app, relaunch

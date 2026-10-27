@@ -270,3 +270,78 @@ final class ProviderPresentationTests: XCTestCase {
         XCTAssertFalse(WindowSemantics.isRolling(provider: .commandCode, window: cc))
     }
 }
+
+final class AlertPersistenceTests: XCTestCase {
+    private let now = Date(timeIntervalSince1970: 1_793_100_000)
+    private var stored: Data?
+    private var writes = 0
+
+    override func setUp() {
+        super.setUp()
+        stored = nil
+        writes = 0
+    }
+
+    private func load() -> AlertState {
+        guard let stored, let state = try? JSONDecoder().decode(AlertState.self, from: stored) else {
+            return AlertState()
+        }
+        return state
+    }
+
+    private func persist(_ state: AlertState) {
+        writes += 1
+        stored = try? JSONEncoder().encode(state)
+    }
+
+    /// Every observation starts from the persisted document, exactly like a
+    /// sequence of independent refreshes (or an app relaunch).
+    private func observe(percent: Double, resetOffset: TimeInterval = 3_600, limited: Bool = false) -> [AlertDecision] {
+        let snapshot = ProviderSnapshot(
+            provider: .go,
+            windows: [QuotaWindow(id: "go.rolling", kind: .rolling, label: "5-hour",
+                                  percent: percent,
+                                  resetsAt: now.addingTimeInterval(resetOffset),
+                                  windowMinutes: 300, isLimited: limited)],
+            origin: .network, source: "test", observedAt: now
+        )
+        var state = load()
+        return AlertEngine.run(snapshot, state: &state, now: now, persist: persist)
+    }
+
+    func testRecoverySurvivesThePersistenceBoundary() {
+        XCTAssertEqual(observe(percent: 93).map(\.kind), [.warning])
+        XCTAssertTrue(observe(percent: 80).isEmpty)
+        XCTAssertEqual(writes, 2, "recovery must be persisted even without an alert")
+        XCTAssertEqual(observe(percent: 91).map(\.kind), [.warning], "crossing after recovery re-arms")
+        XCTAssertTrue(observe(percent: 92).isEmpty)
+    }
+
+    func testLimitEscalationSurvivesRelaunch() {
+        XCTAssertEqual(observe(percent: 92).map(\.kind), [.warning])
+        XCTAssertEqual(observe(percent: 100, limited: true).map(\.kind), [.limit])
+        // Simulated relaunch: decode the stored document again.
+        XCTAssertTrue(observe(percent: 100, limited: true).isEmpty)
+    }
+
+    func testUnchangedObservationDoesNotWrite() {
+        _ = observe(percent: 40)
+        let after = writes
+        _ = observe(percent: 41)
+        XCTAssertEqual(writes, after, "no state transition means no write")
+    }
+
+    func testFixedCycleStillSuppressesAcrossBoundary() {
+        let snapshot = ProviderSnapshot(
+            provider: .commandCode,
+            windows: [QuotaWindow(id: "commandcode.5h", kind: .primary, label: "5-hour",
+                                  percent: 94, resetsAt: now.addingTimeInterval(3_600),
+                                  windowMinutes: 300, isLimited: false)],
+            origin: .network, source: "test", observedAt: now
+        )
+        var state = load()
+        XCTAssertEqual(AlertEngine.run(snapshot, state: &state, now: now, persist: persist).count, 1)
+        state = load()
+        XCTAssertTrue(AlertEngine.run(snapshot, state: &state, now: now, persist: persist).isEmpty)
+    }
+}
