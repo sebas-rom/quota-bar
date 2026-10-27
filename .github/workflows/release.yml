@@ -127,3 +127,14 @@ jobs:
             --url "${{ steps.archive.outputs.url }}" \
             --title "QuotaBar $SHORT (${{ steps.archive.outputs.build }})"
           gh release upload appcast appcast.xml --clobber
+
+      - name: Publish stable download alias + checksums
+        if: steps.channel.outputs.name == 'stable'
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.channel.outputs.tag }}"
+          ASSET="${{ steps.archive.outputs.asset }}"
+          cp "$ASSET" QuotaBar.zip
+          test "$(shasum -a 256 "$ASSET" | cut -d' ' -f1)" = "$(shasum -a 256 QuotaBar.zip | cut -d' ' -f1)"
+          shasum -a 256 "$ASSET" QuotaBar.zip > checksums.txt
+          gh release upload "$TAG" QuotaBar.zip checksums.txt --clobber
