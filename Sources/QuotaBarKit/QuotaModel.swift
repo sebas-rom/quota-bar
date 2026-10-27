@@ -48,6 +48,9 @@ public final class QuotaModel: ObservableObject {
 
     public let isDemo: Bool
     public let store: TelemetryStore?
+    /// Called for fresh, successful network snapshots only (never stale,
+    /// backfilled or demo data). The app wires this to notifications.
+    public var onNetworkSnapshot: ((ProviderSnapshot) -> Void)?
 
     private let probes: QuotaProbes
     private var timer: Timer?
@@ -126,6 +129,9 @@ public final class QuotaModel: ObservableObject {
             snapshots[provider] = snapshot
             health[provider] = ProviderHealth(state: .ok, attemptedAt: Date())
             store?.insert(snapshot)
+            if snapshot.origin == .network {
+                onNetworkSnapshot?(snapshot)
+            }
         case let .stale(snapshot, state, message):
             snapshots[provider] = snapshot
             health[provider] = ProviderHealth(state: state, message: message, attemptedAt: Date())
@@ -255,6 +261,39 @@ public final class QuotaModel: ObservableObject {
     }
 
     // MARK: presentation
+
+    public struct HeadsUp: Equatable, Sendable {
+        public let provider: ProviderID
+        public let window: QuotaWindow
+        public let text: String
+        public let isLimit: Bool
+    }
+
+    /// The single worst window worth surfacing above the cards.
+    public var headsUp: HeadsUp? {
+        var best: (ProviderID, QuotaWindow)?
+        for provider in ProviderID.allCases {
+            guard let snapshot = snapshots[provider] else { continue }
+            for window in snapshot.windows where window.percent.isFinite {
+                guard let current = best else {
+                    best = (provider, window)
+                    continue
+                }
+                if (window.isLimited && !current.1.isLimited) || window.percent > current.1.percent {
+                    best = (provider, window)
+                }
+            }
+        }
+        guard let (provider, window) = best else { return nil }
+        guard window.isLimited || window.percent >= AlertRules.warningThreshold else { return nil }
+        let kind: AlertKind = window.isLimited ? .limit : .warning
+        return HeadsUp(
+            provider: provider,
+            window: window,
+            text: AlertRules.message(provider: provider, window: window, kind: kind),
+            isLimit: window.isLimited
+        )
+    }
 
     public var barText: String {
         var parts: [String] = []

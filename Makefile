@@ -9,9 +9,10 @@ build:
 
 app: build
 	rm -rf $(BUNDLE)
-	mkdir -p $(BUNDLE)/Contents/MacOS $(BUNDLE)/Contents/Frameworks
+	mkdir -p $(BUNDLE)/Contents/MacOS $(BUNDLE)/Contents/Frameworks $(BUNDLE)/Contents/Resources
 	cp $(BIN) $(BUNDLE)/Contents/MacOS/$(APP)
 	cp Info.plist $(BUNDLE)/Contents/Info.plist
+	cp Resources/QuotaBar.icns $(BUNDLE)/Contents/Resources/QuotaBar.icns
 	/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $$(date -u +%Y%m%d%H%M%S)" $(BUNDLE)/Contents/Info.plist
 	@test -n "$(SPARKLE_FW)" || (echo "Sparkle.framework not found; run swift build first"; exit 1)
 	ditto "$(SPARKLE_FW)" $(BUNDLE)/Contents/Frameworks/Sparkle.framework
