@@ -11,8 +11,8 @@ Command:
 
 | File | View | Size (pt) |
 |---|---|---|
-| `popover-light.png` | `PopoverView` (menu-bar popover content) | 320 × 559 |
-| `popover-dark.png` | same, dark appearance | 320 × 559 |
+| `popover-light.png` | `PopoverView` (compact cards) | 320 × 631 |
+| `popover-dark.png` | same, dark appearance | 320 × 631 |
 | `history-light.png` | `HistoryView` (cycle-first History content) | 620 × 1343 |
 | `history-dark.png` | same, dark appearance | 620 × 1343 |
 | `menubar-icon.png` | menu-bar template icon (6×) | 108 × 108 |
@@ -61,6 +61,8 @@ the narrowest supported presentation; the History window has a 520 pt minimum.
 - The menu-bar mark is two meter bars, rendered once at 4× and downsized to 18pt
   (a letter monogram read as a search glyph at menu-bar size; the first attempt
   also double-scaled into a clipped blob).
+- Compact cards show the limiting window per provider with a disclosure chevron;
+  full windows are available on demand and in History.
 - Ad-hoc builds deliver alerts through a floating panel instead of Notification
   Center; the popover now paints an explicit system background so light mode
   cannot inherit a dark wallpaper-tinted material.

@@ -16,6 +16,13 @@ freshness of what you are looking at.
 
 ![Popover](docs/evidence/popover-light.png)
 
+## What's new in 0.8.1 — compact cards
+
+Three providers no longer need a tall popover. Each card shows the most limiting
+window, its reset, and the current 5-hour-cycle sparkline; a small chevron
+expands every window. Toggle **Compact cards** in the ⋯ menu. History still
+carries the full cycle view and forecast.
+
 ## What's new in 0.8 — a trustworthy download
 
 - **Direct download**: `releases/latest/download/QuotaBar.zip` now resolves to the

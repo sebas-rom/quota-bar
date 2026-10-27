@@ -105,6 +105,9 @@ struct Card<Content: View>: View {
     let title: String
     let dot: String
     let subtitle: String?
+    var isExpandable = false
+    var isExpanded = false
+    var onToggleExpanded: (() -> Void)? = nil
     @ViewBuilder let content: Content
 
     var body: some View {
@@ -114,6 +117,15 @@ struct Card<Content: View>: View {
                     .accessibilityHidden(true)
                 Text(title).font(.headline)
                 Spacer()
+                if isExpandable, let onToggleExpanded {
+                    Button(action: onToggleExpanded) {
+                        Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                            .font(.caption2)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .help(isExpanded ? "Show fewer windows" : "Show all quota windows")
+                }
                 if let subtitle {
                     Text(subtitle).font(.caption).foregroundStyle(.secondary)
                 }

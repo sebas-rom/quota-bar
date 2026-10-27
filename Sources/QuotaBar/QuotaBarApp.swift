@@ -9,7 +9,7 @@ import QuotaBarKit
 // Popover: current windows, 24h trend, provenance and freshness.
 // History: a real window with range charts over the local observation store.
 
-private let appVersion = "0.8.0"
+private let appVersion = "0.8.1"
 
 @MainActor
 enum AppEnvironment {
@@ -132,6 +132,7 @@ struct PopoverView: View {
     @ObservedObject var model: QuotaModel
     @ObservedObject private var updates = UpdateController.shared
     @ObservedObject private var alerter = QuotaAlerter.shared
+    @AppStorage("CompactCards") private var compactCards = true
     @Binding var launchAtLogin: Bool
     /// Evidence snapshots render the content without presentation modifiers,
     /// which ImageRenderer cannot lay out reliably.
@@ -226,7 +227,8 @@ struct PopoverView: View {
                         guard window.windowMinutes == 300,
                               window.kind == .rolling || window.kind == .primary else { return nil }
                         return ForecastCopy.line(for: model.forecast(for: provider, window: window))
-                    }
+                    },
+                    compact: compactCards
                 )
             }
             if showKeyEntry { keyEntry }
@@ -281,6 +283,7 @@ struct PopoverView: View {
                     Button("Clear History…") { confirmClearHistory = true }
                 }
                 Divider()
+                Toggle("Compact cards", isOn: $compactCards)
                 Toggle("Quota alerts", isOn: Binding(
                     get: { alerter.enabled },
                     set: { on in Task { await alerter.setEnabled(on) } }
@@ -426,15 +429,20 @@ struct ProviderCard: View {
     let freshness: String?
     let onEnterKey: (() -> Void)?
     var forecastFor: (QuotaWindow) -> String? = { _ in nil }
+    var compact = false
+    @State private var expanded = false
 
     var body: some View {
         Card(
             title: provider.displayName,
             dot: dotColor(for: snapshot?.limiting?.percent),
-            subtitle: subtitle
+            subtitle: subtitle,
+            isExpandable: compact && (snapshot?.windows.count ?? 0) > 1,
+            isExpanded: expanded,
+            onToggleExpanded: { expanded.toggle() }
         ) {
             if let snapshot, !snapshot.windows.isEmpty {
-                ForEach(snapshot.windows) { window in
+                ForEach(visibleWindows(snapshot)) { window in
                     MeterRow(
                         provider: provider.displayName,
                         label: window.label,
@@ -464,6 +472,13 @@ struct ProviderCard: View {
                 emptyState
             }
         }
+    }
+
+    private func visibleWindows(_ snapshot: ProviderSnapshot) -> [QuotaWindow] {
+        if compact, !expanded, let limiting = snapshot.limiting {
+            return [limiting]
+        }
+        return snapshot.windows
     }
 
     private var sparklinePercent: Double? {
