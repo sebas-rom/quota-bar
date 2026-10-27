@@ -1,22 +1,98 @@
 name: release
+
 on:
   push:
+    branches: [main]
     tags: ["v*"]
+  workflow_dispatch:
+
 permissions:
   contents: write
+
+concurrency:
+  group: update-feed
+  cancel-in-progress: false
+
+env:
+  GH_TOKEN: ${{ github.token }}
+
 jobs:
-  build:
+  release:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
+
       - name: Select latest Xcode toolchain
         run: |
-          ls /Applications | grep -E '^Xcode.*\.app$' || true
           sudo xcode-select -s /Applications/Xcode.app
           xcodebuild -version
           swift --version
-      - run: make zip
-      - uses: softprops/action-gh-release@v2
-        with:
-          files: QuotaBar.zip
-          generate_release_notes: true
+
+      - run: swift test
+
+      - run: make app
+
+      - name: Stamp build number and re-sign
+        run: |
+          BUILD=$(date -u +%Y%m%d%H%M%S)
+          SHORT=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" QuotaBar.app/Contents/Info.plist)
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD" QuotaBar.app/Contents/Info.plist
+          codesign --force --deep --sign - QuotaBar.app
+          echo "BUILD=$BUILD" >> "$GITHUB_ENV"
+          echo "SHORT=$SHORT" >> "$GITHUB_ENV"
+
+      - name: Package
+        run: ditto -c -k --sequesterRsrc --keepParent QuotaBar.app QuotaBar.zip
+
+      - name: Sign archive (EdDSA)
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          printf '%s' "$SPARKLE_PRIVATE_KEY" > "$RUNNER_TEMP/sparkle.key"
+          chmod 600 "$RUNNER_TEMP/sparkle.key"
+          SIGN="$(.build/artifacts/sparkle/Sparkle/bin/sign_update -p -f "$RUNNER_TEMP/sparkle.key" QuotaBar.zip)"
+          test -n "$SIGN"
+          echo "SIGN=$SIGN" >> "$GITHUB_ENV"
+          echo "LENGTH=$(stat -f%z QuotaBar.zip)" >> "$GITHUB_ENV"
+
+      - name: Resolve channel
+        id: channel
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+            echo "name=stable" >> "$GITHUB_OUTPUT"
+            echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+            echo "url=https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/QuotaBar.zip" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=nightly" >> "$GITHUB_OUTPUT"
+            echo "tag=nightly" >> "$GITHUB_OUTPUT"
+            echo "url=https://github.com/$GITHUB_REPOSITORY/releases/download/nightly/QuotaBar.zip" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish build
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.channel.outputs.name }}" = "stable" ]; then
+            gh release create "${{ steps.channel.outputs.tag }}" QuotaBar.zip \
+              --title "QuotaBar $SHORT" --generate-notes
+          else
+            gh release delete nightly --cleanup-tag --yes 2>/dev/null || true
+            gh release create nightly QuotaBar.zip --prerelease \
+              --title "Nightly build ($SHORT)" \
+              --notes "Automated build from main at ${GITHUB_SHA:0:7}. Includes nightly-channel updates only."
+          fi
+
+      - name: Update appcast
+        run: |
+          set -euo pipefail
+          gh release view appcast >/dev/null 2>&1 || \
+            gh release create appcast --title "Update feed" --notes "Sparkle appcast for QuotaBar stable and nightly channels."
+          gh release download appcast --pattern appcast.xml --output appcast.xml --clobber 2>/dev/null || true
+          python3 scripts/appcast.py \
+            --existing appcast.xml --out appcast.xml \
+            --version "$BUILD" --short "$SHORT" \
+            --channel "${{ steps.channel.outputs.name }}" \
+            --signature "$SIGN" --length "$LENGTH" \
+            --url "${{ steps.channel.outputs.url }}" \
+            --title "QuotaBar $SHORT ($BUILD)"
+          gh release upload appcast appcast.xml --clobber
