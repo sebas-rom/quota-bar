@@ -27,7 +27,7 @@ enum EvidenceRenderer {
         renderPopover(model: model, to: directory.appendingPathComponent("popover-dark.png"), dark: true)
         renderHistory(model: model, to: directory.appendingPathComponent("history-light.png"), dark: false)
         renderHistory(model: model, to: directory.appendingPathComponent("history-dark.png"), dark: true)
-        if let png = MenuBarIcon.png(pixelSize: 36) {
+        if let png = MenuBarIcon.png(pixelSize: 72) {
             try? png.write(to: directory.appendingPathComponent("menubar-icon.png"))
         }
         print("evidence written to \(directory.path)"); fflush(stdout)

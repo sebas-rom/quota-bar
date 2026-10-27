@@ -9,7 +9,7 @@ import QuotaBarKit
 // Popover: current windows, 24h trend, provenance and freshness.
 // History: a real window with range charts over the local observation store.
 
-private let appVersion = "0.5.1"
+private let appVersion = "0.5.2"
 
 @MainActor
 enum AppEnvironment {
@@ -92,6 +92,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let iconURL = Bundle.main.url(forResource: "QuotaBar", withExtension: "icns"),
            let icon = NSImage(contentsOf: iconURL) {
             NSApplication.shared.applicationIconImage = icon
+        }
+
+        if ProcessInfo.processInfo.arguments.contains("--test-toast") {
+            Task { @MainActor in
+                AlertToast.shared.show("Test alert — Quota alerts are working.")
+                try? await Task.sleep(nanoseconds: 12_000_000_000)
+                NSApplication.shared.terminate(nil)
+            }
+            return
         }
         _ = UpdateController.shared
         model.onNetworkSnapshot = { snapshot in
@@ -202,6 +211,10 @@ struct PopoverView: View {
         }
         .padding(Layout.outer)
         .frame(width: 320)
+        // MenuBarExtra's vibrant material samples the wallpaper and can render
+        // dark while the system is in light mode, leaving light-mode text on a
+        // dark plate. An explicit system background follows the appearance.
+        .background(Color(nsColor: .windowBackgroundColor))
     }
 
     // MARK: footer
