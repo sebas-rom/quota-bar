@@ -5,8 +5,8 @@
 [![Platform](https://img.shields.io/badge/platform-macOS%2013%2B-blue)](https://github.com/sebas-rom/quota-bar)
 [![Swift](https://img.shields.io/badge/swift-5.9-orange)](https://github.com/sebas-rom/quota-bar)
 
-Two AI stacks, one glance. A native macOS menu-bar for **opencode-go + Codex
-quota** that now *remembers*: 24-hour trends, a local observation store, and a
+Three AI stacks, one glance. A native macOS menu-bar for **opencode-go, Codex and
+Command Code quota** that now *remembers*: 24-hour trends, a local observation store, and a
 history window — still local-first, still no browser or keychain scraping.
 
 Menu shows e.g. `Go 74% · Cx 22%`. Click for two provider cards with per-window
@@ -31,6 +31,9 @@ you are looking at.
 - **More of the real answer.** Codex reset credits and credit balance are shown
   when present; additional/review rate-limit buckets are decoded instead of
   assumed away.
+- **Command Code.** 5-hour and weekly caps, monthly credits left, and the real
+  subscription renewal date (GOAT/Pro/Max plans expose their billing period —
+  no inference).
 - **Provider-agnostic rendering.** Cards and charts are driven by one normalized
   snapshot shape, so adding a provider is an adapter, not a UI rewrite.
 
@@ -49,11 +52,13 @@ in the ⋯ menu. No setup needed if your keys are already on disk (see below).
 | opencode-go | Keychain (entered in-app) → `~/.config/quota-bar/opencode-go.json` `{"apiKey"}` → `$OPENCODE_GO_API_KEY` → opencode `auth.json` `opencode-go` entry | `GET https://opencode.ai/zen/go/v1/usage` |
 | Codex live | `~/.codex/auth.json` → `tokens.access_token` (+ `account_id`) | `GET https://chatgpt.com/backend-api/wham/usage` |
 | Codex fallback | `~/.codex/sessions/**/*.jsonl`, last `token_count` rate-limit snapshot | local file read |
+| Command Code | `$COMMANDCODE_API_KEY` → `~/.config/opencode/opencode.json` `providers.commandcode.settings.apiKey` | `GET https://api.commandcode.ai/alpha/billing/credits` + `/alpha/billing/subscriptions` |
 | History | `~/Library/Application Support/QuotaBar/telemetry.sqlite` | local SQLite |
 
 No working Go key anywhere? The menu offers **Enter API key…**: paste your
 opencode Personal API key, it validates against `/usage` immediately, and on
-success stores it in **macOS Keychain**. Remove it anytime via
+success stores it in **macOS Keychain** plus a `0600` cache file at
+`~/.config/quota-bar/opencode-go.json` (so ad-hoc updates do not re-prompt). Remove it anytime via
 **Remove Saved Go Key…** (with confirmation — your OpenCode/Codex credentials
 are untouched). Nothing is ever logged; only presence/source is shown.
 
@@ -111,6 +116,9 @@ every quota row and chart.
   endpoint (out of scope).
 - Codex's local log can lag the live endpoint. The app prefers the live probe and
   labels anything older than 15 minutes.
+- Command Code windows are enforced server-side; QuotaBar reads the same
+  `/alpha/billing/*` endpoints as the official CLI. Pay-as-you-go "Provider"
+  accounts have no windows, only credits.
 - Local Codex session-log history is **device-level**: it carries no trustworthy
   account identity, so it is not attributed to the signed-in account and is
   labelled as such in the History window. Live observations are account-scoped,
