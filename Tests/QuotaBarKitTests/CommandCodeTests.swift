@@ -59,6 +59,7 @@ final class CommandCodeTests: XCTestCase {
         let sub = try CommandCode.decodeSubscription(json(subscriptionFixture))
         XCTAssertEqual(sub.planId, "individual-goat")
         XCTAssertEqual(sub.status, "active")
+        XCTAssertEqual(sub.periodStart, ISO8601DateFormatter().date(from: "2026-10-27T11:21:55Z"))
         XCTAssertFalse(sub.cancelAtPeriodEnd)
 
         let facts = CommandCode.facts(credits, subscription: sub)
@@ -71,8 +72,8 @@ final class CommandCodeTests: XCTestCase {
 
     func testCanceledSubscriptionCopy() throws {
         var sub = try CommandCode.decodeSubscription(json(subscriptionFixture))
-        sub = CommandCodeSubscription(planId: sub.planId, status: "active", periodEnd: sub.periodEnd,
-                                      cancelAtPeriodEnd: true, userId: sub.userId)
+        sub = CommandCodeSubscription(planId: sub.planId, status: "active", periodStart: sub.periodStart,
+                                      periodEnd: sub.periodEnd, cancelAtPeriodEnd: true, userId: sub.userId)
         XCTAssertEqual(CommandCode.renewalFact(sub).map { $0.hasPrefix("Ends ") }, true)
     }
 

@@ -29,6 +29,7 @@ public struct CommandCodeCredits: Equatable, Sendable {
 public struct CommandCodeSubscription: Equatable, Sendable {
     public let planId: String?
     public let status: String?
+    public let periodStart: Date?
     public let periodEnd: Date?
     public let cancelAtPeriodEnd: Bool
     public let userId: String?
@@ -171,6 +172,7 @@ public enum CommandCode {
         return CommandCodeSubscription(
             planId: payload["planId"] as? String,
             status: payload["status"] as? String,
+            periodStart: parse(payload["currentPeriodStart"]),
             periodEnd: parse(payload["currentPeriodEnd"]),
             cancelAtPeriodEnd: (payload["cancelAtPeriodEnd"] as? Bool) ?? false,
             userId: payload["userId"] as? String
@@ -201,7 +203,8 @@ public enum CommandCode {
                 id: "commandcode.monthly", kind: .monthly, label: "Monthly",
                 percent: min(100, used / total * 100),
                 resetsAt: subscription?.periodEnd, windowMinutes: 43_200,
-                isLimited: credits.monthlyRemaining <= 0
+                isLimited: credits.monthlyRemaining <= 0,
+                cycleStart: subscription?.periodStart
             ))
         }
         return windows

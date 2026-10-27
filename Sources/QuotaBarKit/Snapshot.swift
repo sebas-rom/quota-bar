@@ -41,9 +41,13 @@ public struct QuotaWindow: Identifiable, Equatable, Sendable {
     public let resetsAt: Date?
     public let windowMinutes: Int?
     public let isLimited: Bool
+    /// Exact cycle start when the provider exposes one (Command Code billing
+    /// period). Otherwise the chart derives it from the reset boundary.
+    public let cycleStart: Date?
 
     public init(id: String, kind: WindowKind, label: String, percent: Double,
-                resetsAt: Date?, windowMinutes: Int?, isLimited: Bool) {
+                resetsAt: Date?, windowMinutes: Int?, isLimited: Bool,
+                cycleStart: Date? = nil) {
         self.id = id
         self.kind = kind
         self.label = label
@@ -51,6 +55,7 @@ public struct QuotaWindow: Identifiable, Equatable, Sendable {
         self.resetsAt = resetsAt
         self.windowMinutes = windowMinutes
         self.isLimited = isLimited
+        self.cycleStart = cycleStart
     }
 }
 

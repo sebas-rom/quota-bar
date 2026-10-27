@@ -193,6 +193,116 @@ public final class QuotaModel: ObservableObject {
         )
     }
 
+    // MARK: cycles
+
+    public func currentCycle(for provider: ProviderID, window: QuotaWindow, now: Date = Date()) -> QuotaCycle? {
+        guard let end = window.resetsAt else { return nil }
+        let minutes = window.windowMinutes ?? 0
+        let start: Date?
+        if let exact = window.cycleStart {
+            start = exact
+        } else if minutes > 0 {
+            start = end.addingTimeInterval(-Double(minutes) * 60)
+        } else {
+            start = nil
+        }
+        guard let start, start < end else { return nil }
+        let provenance: CycleProvenance = window.cycleStart != nil
+            ? .exact
+            : (window.kind == .monthly ? .estimated : .derived)
+        return QuotaCycle(
+            provider: provider, windowID: window.id,
+            start: start, end: end, provenance: provenance, isCurrent: true
+        )
+    }
+
+    public func cycles(for provider: ProviderID, window: QuotaWindow, now: Date = Date()) -> [QuotaCycle] {
+        var out: [QuotaCycle] = []
+        let current = currentCycle(for: provider, window: window, now: now)
+        if let current { out.append(current) }
+
+        guard let store else { return out }
+        let minutes = window.windowMinutes ?? 0
+        guard minutes > 0 else { return out }
+        let stored = store.storedCycles(
+            provider: provider,
+            windowID: window.id,
+            accountRef: historyScopeRef(for: provider)
+        )
+        for cycle in stored {
+            if let current, abs(cycle.resetAt.timeIntervalSince(current.end)) < 180 { continue }
+            let start = cycle.resetAt.addingTimeInterval(-Double(minutes) * 60)
+            guard start < cycle.resetAt else { continue }
+            let provenance: CycleProvenance = window.kind == .monthly ? .estimated : .derived
+            out.append(QuotaCycle(
+                provider: provider, windowID: window.id,
+                start: start, end: cycle.resetAt,
+                provenance: provenance, isCurrent: false
+            ))
+        }
+        return out
+    }
+
+    public func rawCycleSamples(for cycle: QuotaCycle, provider: ProviderID, window: QuotaWindow) -> [ForecastSample] {
+        guard let store else { return [] }
+        return store.cycleSamples(
+            provider: provider,
+            windowID: window.id,
+            accountRef: historyScopeRef(for: provider),
+            start: cycle.start,
+            end: cycle.end,
+            resetAt: cycle.end
+        )
+    }
+
+    public func cycleSamples(for cycle: QuotaCycle, provider: ProviderID, window: QuotaWindow) -> [SamplePoint] {
+        downsample(
+            rawCycleSamples(for: cycle, provider: provider, window: window)
+                .map { SamplePoint(at: $0.at, percent: $0.percent) },
+            max: 400
+        )
+    }
+
+    public func cycleForecast(
+        for cycle: QuotaCycle,
+        provider: ProviderID,
+        window: QuotaWindow,
+        now: Date = Date()
+    ) -> ForecastState {
+        guard cycle.isCurrent else { return .unavailable("historical cycle") }
+        return ForecastEngine.forecast(
+            samples: rawCycleSamples(for: cycle, provider: provider, window: window),
+            now: now,
+            currentPercent: window.percent,
+            resetAt: cycle.end,
+            windowMinutes: window.windowMinutes ?? 0
+        )
+    }
+
+    public func cycleProjection(
+        for cycle: QuotaCycle,
+        provider: ProviderID,
+        window: QuotaWindow,
+        now: Date = Date()
+    ) -> ForecastProjection? {
+        guard cycle.isCurrent else { return nil }
+        return ForecastEngine.projection(
+            samples: rawCycleSamples(for: cycle, provider: provider, window: window),
+            now: now,
+            currentPercent: window.percent,
+            resetAt: cycle.end,
+            windowMinutes: window.windowMinutes ?? 0
+        )
+    }
+
+    /// Sparkline data for a card: the current cycle of the given window.
+    public func cycleTrend(for provider: ProviderID, window: QuotaWindow) -> (points: [SamplePoint], cycle: QuotaCycle)? {
+        guard let cycle = currentCycle(for: provider, window: window) else { return nil }
+        let points = cycleSamples(for: cycle, provider: provider, window: window)
+        guard points.count >= 2 else { return nil }
+        return (points, cycle)
+    }
+
     public func historyWindowIDs(provider: ProviderID) -> [String] {
         store?.observedWindowIDs(provider: provider) ?? []
     }

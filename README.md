@@ -15,6 +15,25 @@ you are looking at.
 
 ![Popover](docs/evidence/popover-light.png)
 
+## What's new in 0.7 — cycle-first history
+
+History is no longer a 24h/7d log. Every chart covers **one quota cycle**, from
+window start to reset:
+
+- 5-hour windows show the current 5-hour frame; weekly and monthly charts show
+  their own cycle (Sep 30–Oct 30, Oct 27–Nov 27, …).
+- A dashed 100% limit line, a current-point ring, and a dashed forecast inside
+  the same frame for the current 5-hour window.
+- Previous-cycle chevrons when observations exist for an earlier cycle.
+- Exact billing periods when the provider exposes them (Command Code), and
+  “approx.” for derived monthly windows (OpenCode Go).
+- Partial history is labelled (“History starts Oct 26”), never backfilled to 0.
+- The popover sparkline is now the current 5-hour cycle, not a 24h window.
+
+Weekly and monthly forecasts are deliberately not drawn: a one-hour slope is not
+evidence for a 30-day projection. The History window is the visual surface; the
+popover keeps a single conditional caption.
+
 ## What's new in 0.6 — a conservative forecast
 
 Under each **5-hour** window, when there is enough recent data, QuotaBar adds one

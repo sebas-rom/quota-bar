@@ -131,6 +131,10 @@ struct Card<Content: View>: View {
 struct Sparkline: View {
     let points: [SamplePoint]
     let color: Color
+    /// Optional cycle frame. When provided, x runs from cycle start to reset,
+    /// so a partial history starts where data actually begins.
+    var start: Date? = nil
+    var end: Date? = nil
 
     var body: some View {
         GeometryReader { geo in
@@ -168,8 +172,8 @@ struct Sparkline: View {
 
     private func normalized(in size: CGSize) -> [CGPoint] {
         let sorted = points.sorted { $0.at < $1.at }
-        let t0 = sorted.first?.at ?? Date()
-        let t1 = sorted.last?.at ?? Date()
+        let t0 = start ?? sorted.first?.at ?? Date()
+        let t1 = end ?? sorted.last?.at ?? Date()
         let span = max(1, t1.timeIntervalSince(t0))
         return sorted.map { point in
             let x = t1 == t0 ? size.width : CGFloat(point.at.timeIntervalSince(t0) / span) * size.width

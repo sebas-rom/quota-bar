@@ -23,6 +23,20 @@ public struct ForecastSample: Equatable, Sendable {
     }
 }
 
+public struct ForecastProjection: Equatable, Sendable {
+    public let from: Date
+    public let fromPercent: Double
+    public let to: Date
+    public let toPercent: Double
+}
+
+public struct ForecastAnalysis: Equatable, Sendable {
+    public let state: ForecastState
+    public let ratePerMinute: Double?
+    public let lastAt: Date?
+    public let lastPercent: Double?
+}
+
 public enum ForecastState: Equatable, Sendable {
     case unavailable(String)
     case collecting
@@ -50,72 +64,117 @@ public enum ForecastEngine {
         resetAt: Date?,
         windowMinutes: Int
     ) -> ForecastState {
-        guard let resetAt else { return .unavailable("reset time unknown") }
+        analyze(
+            samples: samples, now: now, currentPercent: currentPercent,
+            resetAt: resetAt, windowMinutes: windowMinutes
+        ).state
+    }
+
+    public static func projection(
+        samples: [ForecastSample],
+        now: Date,
+        currentPercent: Double,
+        resetAt: Date?,
+        windowMinutes: Int
+    ) -> ForecastProjection? {
+        let analysis = analyze(
+            samples: samples, now: now, currentPercent: currentPercent,
+            resetAt: resetAt, windowMinutes: windowMinutes
+        )
+        guard let resetAt,
+              let rate = analysis.ratePerMinute,
+              let lastAt = analysis.lastAt,
+              let lastPercent = analysis.lastPercent else { return nil }
+        switch analysis.state {
+        case .approaching95, .below95:
+            break
+        default:
+            return nil
+        }
+
+        let horizonEnd = now.addingTimeInterval(maximumHorizon)
+        let end = min(resetAt, horizonEnd)
+        guard end > lastAt else { return nil }
+        let projected = lastPercent + rate * (end.timeIntervalSince(lastAt) / 60)
+        return ForecastProjection(
+            from: lastAt,
+            fromPercent: lastPercent,
+            to: end,
+            toPercent: min(100, max(lastPercent, projected))
+        )
+    }
+
+    public static func analyze(
+        samples: [ForecastSample],
+        now: Date,
+        currentPercent: Double,
+        resetAt: Date?,
+        windowMinutes: Int
+    ) -> ForecastAnalysis {
+        func result(_ state: ForecastState, rate: Double? = nil, last: ForecastSample? = nil) -> ForecastAnalysis {
+            ForecastAnalysis(state: state, ratePerMinute: rate, lastAt: last?.at, lastPercent: last?.percent)
+        }
+        guard let resetAt else { return result(.unavailable("reset time unknown")) }
         let resetRemaining = resetAt.timeIntervalSince(now)
         guard resetRemaining >= minimumResetMargin else {
-            return .unavailable("too close to reset")
+            return result(.unavailable("too close to reset"))
         }
 
         let network = samples
             .filter { $0.origin == .network && $0.at <= now }
             .sorted { $0.at < $1.at }
-        guard let latest = network.last else { return .collecting }
+        guard let latest = network.last else { return result(.collecting) }
         guard now.timeIntervalSince(latest.at) <= maximumAge else {
-            return .unavailable("stale")
+            return result(.unavailable("stale"))
         }
 
-        // Only samples belonging to this reset boundary.
         let inCycle = network.filter { sample in
             guard let sampleReset = sample.resetsAt else { return false }
             return abs(sampleReset.timeIntervalSince(resetAt)) <= resetStability
                 && sample.at >= now.addingTimeInterval(-lookback)
         }
         guard inCycle.count >= minimumSamples, let first = inCycle.first, let last = inCycle.last else {
-            return .collecting
+            return result(.collecting)
         }
-        guard last.at.timeIntervalSince(first.at) >= minimumSpan else { return .collecting }
+        guard last.at.timeIntervalSince(first.at) >= minimumSpan else { return result(.collecting) }
 
         for (a, b) in zip(inCycle, inCycle.dropFirst()) {
             if b.at.timeIntervalSince(a.at) > maximumGap {
-                return .unavailable("sampling gap")
+                return result(.unavailable("sampling gap"))
             }
         }
 
         let minutes = last.at.timeIntervalSince(first.at) / 60
-        guard minutes > 0 else { return .collecting }
+        guard minutes > 0 else { return result(.collecting) }
         let net = last.percent - first.percent
-        guard net >= minimumNetRise else {
-            // Not enough recent activity to say anything useful; a flat or
-            // falling window must not produce a reassuring "won't hit" claim.
-            return .collecting
-        }
-        let rate = net / minutes // percentage points per minute
-        guard rate > 0 else { return .collecting }
+        guard net >= minimumNetRise else { return result(.collecting) }
+        let rate = net / minutes
+        guard rate > 0 else { return result(.collecting) }
 
         let percent = max(currentPercent, last.percent)
         if percent >= threshold {
-            return .already95(resetMinutes: Int(resetRemaining / 60))
+            return result(.already95(resetMinutes: Int(resetRemaining / 60)), rate: rate, last: last)
         }
 
         let etaSeconds = (threshold - percent) / rate * 60
         let margin = minimumResetMargin
 
-        // A slow but real rate can still answer the useful question: it will not
-        // reach 95% before this reset. The two-hour horizon only limits positive
-        // "approaching" claims, not the negative one.
         if etaSeconds > resetRemaining + margin {
-            return .below95(resetMinutes: Int(resetRemaining / 60))
+            return result(.below95(resetMinutes: Int(resetRemaining / 60)), rate: rate, last: last)
         }
         if etaSeconds <= resetRemaining - margin {
             guard etaSeconds <= maximumHorizon else {
-                return .unavailable("beyond horizon")
+                return result(.unavailable("beyond horizon"), rate: rate, last: last)
             }
-            return .approaching95(
-                minutes: max(1, Int((etaSeconds / 60).rounded())),
-                resetMinutes: Int(resetRemaining / 60)
+            return result(
+                .approaching95(
+                    minutes: max(1, Int((etaSeconds / 60).rounded())),
+                    resetMinutes: Int(resetRemaining / 60)
+                ),
+                rate: rate, last: last
             )
         }
-        return .unavailable("close to reset")
+        return result(.unavailable("close to reset"), rate: rate, last: last)
     }
 }
 
@@ -124,10 +183,10 @@ public enum ForecastCopy {
     /// intentionally silent: they belong in diagnostics, not in the popover.
     public static func line(for state: ForecastState, now: Date = Date()) -> String? {
         switch state {
-        case let .approaching95(minutes, resetMinutes):
-            return "At recent pace: ~\(duration(minutes)) to 95% · resets in \(duration(resetMinutes))"
-        case let .below95(resetMinutes):
-            return "At recent pace: below 95% until reset (~\(duration(resetMinutes)))"
+        case let .approaching95(minutes, _):
+            return "At recent pace · 95% in ~\(duration(minutes))"
+        case .below95:
+            return "At recent pace · below 95% by reset"
         case let .already95(resetMinutes):
             return "95% reached · resets in \(duration(resetMinutes))"
         case .collecting, .unavailable:

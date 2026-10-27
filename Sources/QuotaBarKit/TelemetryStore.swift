@@ -202,6 +202,100 @@ public final class TelemetryStore: @unchecked Sendable {
         } ?? false
     }
 
+    public struct StoredCycle: Equatable, Sendable {
+        public let resetAt: Date
+        public let first: Date
+        public let last: Date
+        public let count: Int
+    }
+
+    /// Distinct reset boundaries observed for a window, newest first.
+    public func storedCycles(
+        provider: ProviderID,
+        windowID: String,
+        accountRef: String? = nil,
+        limit: Int = 20
+    ) -> [StoredCycle] {
+        withLock { db in
+            let sql = """
+            SELECT MAX(resets_at), MIN(observed_at), MAX(observed_at), COUNT(*)
+            FROM sample
+            WHERE provider = ? AND window_id = ? AND resets_at IS NOT NULL AND origin = 'network'
+              AND (? IS NULL OR account_ref = ? OR account_ref IS NULL)
+            GROUP BY CAST(resets_at / 120 AS INTEGER)
+            ORDER BY MAX(resets_at) DESC
+            LIMIT ?
+            """
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+            defer { sqlite3_finalize(stmt) }
+            bind(stmt, 1, provider.rawValue)
+            bind(stmt, 2, windowID)
+            if let accountRef { bind(stmt, 3, accountRef); bind(stmt, 4, accountRef) }
+            else { sqlite3_bind_null(stmt, 3); sqlite3_bind_null(stmt, 4) }
+            sqlite3_bind_int(stmt, 5, Int32(limit))
+            var out: [StoredCycle] = []
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                out.append(StoredCycle(
+                    resetAt: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 0)),
+                    first: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 1)),
+                    last: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 2)),
+                    count: Int(sqlite3_column_int64(stmt, 3))
+                ))
+            }
+            return out
+        } ?? []
+    }
+
+    /// Observations that belong to exactly one reset boundary. Never mixes
+    /// cycles, never bridges a reset.
+    public func cycleSamples(
+        provider: ProviderID,
+        windowID: String,
+        accountRef: String? = nil,
+        start: Date,
+        end: Date,
+        resetAt: Date,
+        tolerance: TimeInterval = 120
+    ) -> [ForecastSample] {
+        withLock { db in
+            let sql = """
+            SELECT observed_at, percent, resets_at, origin FROM sample
+            WHERE provider = ? AND window_id = ?
+              AND observed_at >= ? AND observed_at < ?
+              AND resets_at IS NOT NULL AND resets_at BETWEEN ? AND ?
+              AND origin = 'network'
+              AND (? IS NULL OR account_ref = ? OR account_ref IS NULL)
+            ORDER BY observed_at ASC LIMIT 5000
+            """
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+            defer { sqlite3_finalize(stmt) }
+            bind(stmt, 1, provider.rawValue)
+            bind(stmt, 2, windowID)
+            sqlite3_bind_double(stmt, 3, start.timeIntervalSince1970)
+            sqlite3_bind_double(stmt, 4, end.timeIntervalSince1970)
+            sqlite3_bind_double(stmt, 5, resetAt.timeIntervalSince1970 - tolerance)
+            sqlite3_bind_double(stmt, 6, resetAt.timeIntervalSince1970 + tolerance)
+            if let accountRef { bind(stmt, 7, accountRef); bind(stmt, 8, accountRef) }
+            else { sqlite3_bind_null(stmt, 7); sqlite3_bind_null(stmt, 8) }
+
+            var out: [ForecastSample] = []
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                let reset: Date? = sqlite3_column_type(stmt, 2) == SQLITE_NULL
+                    ? nil : Date(timeIntervalSince1970: sqlite3_column_double(stmt, 2))
+                let origin = sqlite3_column_text(stmt, 3).map { String(cString: $0) } ?? "network"
+                out.append(ForecastSample(
+                    at: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 0)),
+                    percent: sqlite3_column_double(stmt, 1),
+                    resetsAt: reset,
+                    origin: SnapshotOrigin(rawValue: origin) ?? .network
+                ))
+            }
+            return out
+        } ?? []
+    }
+
     /// Raw network observations for forecasting. Never mixes origins, and
     /// honours the account scope used by the charts.
     public func forecastSamples(

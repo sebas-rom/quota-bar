@@ -9,7 +9,7 @@ import QuotaBarKit
 // Popover: current windows, 24h trend, provenance and freshness.
 // History: a real window with range charts over the local observation store.
 
-private let appVersion = "0.6.0"
+private let appVersion = "0.7.0"
 
 @MainActor
 enum AppEnvironment {
@@ -145,9 +145,24 @@ struct PopoverView: View {
     @State private var confirmRemoveKey = false
     @State private var confirmClearHistory = false
 
-    private func trend(for provider: ProviderID) -> [SamplePoint] {
-        guard let windowID = model.snapshots[provider]?.limiting?.id else { return [] }
-        return model.trend(provider: provider, windowID: windowID)
+    private func cycleTrend(for provider: ProviderID) -> (points: [SamplePoint], start: Date, end: Date, label: String)? {
+        // The popover preview is about the current 5-hour window; monthly and
+        // weekly shapes live in History. Fall back to the limiting window only
+        // when a provider exposes no 5-hour window.
+        let windows = model.snapshots[provider]?.windows ?? []
+        let window = windows.first { $0.windowMinutes == 300 && ($0.kind == .rolling || $0.kind == .primary) }
+            ?? model.snapshots[provider]?.limiting
+        guard let window, let trend = model.cycleTrend(for: provider, window: window) else { return nil }
+        return (trend.points, trend.cycle.start, trend.cycle.end, cycleLabel(window.windowMinutes))
+    }
+
+    private func cycleLabel(_ minutes: Int?) -> String {
+        switch minutes {
+        case 300: return "5h cycle"
+        case 10_080: return "7d cycle"
+        case 43_200: return "30d cycle"
+        default: return "cycle"
+        }
     }
 
     var body: some View {
@@ -196,15 +211,20 @@ struct PopoverView: View {
                 .accessibilityElement(children: .combine)
             }
             ForEach(ProviderID.allCases, id: \.self) { provider in
+                let trend = cycleTrend(for: provider)
                 ProviderCard(
                     provider: provider,
                     snapshot: model.snapshots[provider],
                     health: model.health[provider],
-                    trend: trend(for: provider),
+                    trend: trend?.points ?? [],
+                    trendStart: trend?.start,
+                    trendEnd: trend?.end,
+                    trendLabel: trend?.label,
                     freshness: model.staleness(for: provider),
                     onEnterKey: provider == .go ? { showKeyEntry = true } : nil,
                     forecastFor: { window in
-                        guard window.kind == .rolling else { return nil }
+                        guard window.windowMinutes == 300,
+                              window.kind == .rolling || window.kind == .primary else { return nil }
                         return ForecastCopy.line(for: model.forecast(for: provider, window: window))
                     }
                 )
@@ -400,6 +420,9 @@ struct ProviderCard: View {
     let snapshot: ProviderSnapshot?
     let health: ProviderHealth?
     let trend: [SamplePoint]
+    var trendStart: Date? = nil
+    var trendEnd: Date? = nil
+    var trendLabel: String? = nil
     let freshness: String?
     let onEnterKey: (() -> Void)?
     var forecastFor: (QuotaWindow) -> String? = { _ in nil }
@@ -424,8 +447,13 @@ struct ProviderCard: View {
                 }
                 if trend.count >= 2 {
                     HStack(spacing: 6) {
-                        Sparkline(points: trend, color: dotColor(dotColor(for: snapshot.limiting?.percent)))
-                        Text("24h").font(.caption2).foregroundStyle(.tertiary)
+                        Sparkline(
+                            points: trend,
+                            color: dotColor(dotColor(for: sparklinePercent)),
+                            start: trendStart,
+                            end: trendEnd
+                        )
+                        Text(trendLabel ?? "cycle").font(.caption2).foregroundStyle(.tertiary)
                     }
                     .padding(.top, 2)
                     .accessibilityElement(children: .ignore)
@@ -436,6 +464,12 @@ struct ProviderCard: View {
                 emptyState
             }
         }
+    }
+
+    private var sparklinePercent: Double? {
+        snapshot?.windows.first {
+            $0.windowMinutes == 300 && ($0.kind == .rolling || $0.kind == .primary)
+        }?.percent ?? snapshot?.limiting?.percent
     }
 
     private var subtitle: String? {

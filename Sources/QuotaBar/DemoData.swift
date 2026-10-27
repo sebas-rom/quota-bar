@@ -47,7 +47,7 @@ enum DemoData {
             Series(id: "go.weekly", label: "Weekly", provider: .go, minutes: 10_080, reset: now.addingTimeInterval(3 * 86_400 + 4 * 3_600)) { t in
                 linear(t, from: 30, to: 38)
             },
-            Series(id: "go.monthly", label: "Monthly", provider: .go, minutes: 43_200, reset: now.addingTimeInterval(12 * 86_400)) { t in
+            Series(id: "go.monthly", label: "Monthly", provider: .go, minutes: 43_200, reset: now.addingTimeInterval(3 * 86_400)) { t in
                 linear(t, from: 89, to: 93)
             },
             Series(id: "codex.primary", label: "5-hour", provider: .codex, minutes: 300, reset: codexPrimaryReset) { t in
@@ -56,6 +56,15 @@ enum DemoData {
             Series(id: "codex.secondary", label: "Weekly", provider: .codex, minutes: 10_080, reset: now.addingTimeInterval(4 * 86_400 + 6 * 3_600)) { t in
                 linear(t, from: 7, to: 9)
             },
+            Series(id: "commandcode.5h", label: "5-hour", provider: .commandCode, minutes: 300, reset: now.addingTimeInterval(86 * 60)) { t in
+                saw(t, end: now.addingTimeInterval(86 * 60), windowSeconds: 18_000, base: 4, amp: 24)
+            },
+            Series(id: "commandcode.weekly", label: "Weekly", provider: .commandCode, minutes: 10_080, reset: now.addingTimeInterval(6 * 86_400)) { t in
+                linear(t, from: 4, to: 6)
+            },
+            Series(id: "commandcode.monthly", label: "Monthly", provider: .commandCode, minutes: 43_200, reset: now.addingTimeInterval(30 * 86_400)) { t in
+                linear(t, from: 1, to: 2.2)
+            },
         ]
 
         // 24 hours of five-minute samples.
@@ -63,15 +72,18 @@ enum DemoData {
         for index in 0..<sampleCount {
             let t = now.addingTimeInterval(-Double(sampleCount - 1 - index) * 300)
             for s in series {
+                let windowSeconds = Double(s.minutes) * 60
+                let cyclesBack = floor(max(0, now.timeIntervalSince(t)) / windowSeconds)
+                let reset = s.reset.addingTimeInterval(-cyclesBack * windowSeconds)
                 let snapshot = ProviderSnapshot(
                     provider: s.provider,
                     windows: [QuotaWindow(
                         id: s.id, kind: .primary, label: s.label,
-                        percent: s.percent(t), resetsAt: nil,
+                        percent: s.percent(t), resetsAt: reset,
                         windowMinutes: s.minutes, isLimited: false
                     )],
                     plan: s.provider == .codex ? "plus" : nil,
-                    origin: .demo,
+                    origin: .network,
                     source: "demo data",
                     observedAt: t
                 )
@@ -114,11 +126,12 @@ enum DemoData {
             provider: .commandCode,
             windows: [
                 QuotaWindow(id: "commandcode.5h", kind: .rolling, label: "5-hour",
-                            percent: 10.9, resetsAt: now.addingTimeInterval(2 * 3_600), windowMinutes: 300, isLimited: false),
+                            percent: 10.9, resetsAt: now.addingTimeInterval(86 * 60), windowMinutes: 300, isLimited: false),
                 QuotaWindow(id: "commandcode.weekly", kind: .weekly, label: "Weekly",
                             percent: 4.4, resetsAt: now.addingTimeInterval(6 * 86_400), windowMinutes: 10_080, isLimited: false),
                 QuotaWindow(id: "commandcode.monthly", kind: .monthly, label: "Monthly",
-                            percent: 2.2, resetsAt: now.addingTimeInterval(31 * 86_400), windowMinutes: 43_200, isLimited: false),
+                            percent: 2.2, resetsAt: now.addingTimeInterval(30 * 86_400), windowMinutes: 43_200, isLimited: false,
+                            cycleStart: now.addingTimeInterval(-86_400)),
             ],
             plan: "GOAT",
             origin: .demo,
