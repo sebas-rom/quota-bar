@@ -34,6 +34,16 @@ at this time. This is a deliberate trade-off, not an unfinished step.
 The implementation plan is ready in [`docs/SIGNING.md`](SIGNING.md); it stays
 disabled until a certificate exists.
 
+## 2026-10-27 — Alerts use episodes on rolling windows
+
+A rolling window's reset advances continuously (measured: ~170 distinct reset
+values/day), so a reset-derived dedupe key re-arms an alert every few minutes.
+Rolling windows therefore use a threshold **episode**: one 90% warning and one
+independent limit escalation per episode, re-armed only after usage falls below
+85%. Fixed-cycle windows keep the reset-bucket key. One classification
+(`WindowSemantics`) is shared by alerts, history and the popover so the surfaces
+cannot disagree.
+
 ## 2026-10-27 — Rolling vs fixed quota windows
 
 Go's 5-hour window and Codex's primary 5-hour window report a reset that advances

@@ -28,12 +28,14 @@ freshness of what you are looking at.
   warning, extra windows counted), a close button, pointer-screen placement,
   Reduce Motion support, and accurate Focus wording. Ad-hoc alerts are a panel;
   signed builds use Notification Center.
-- **Rolling 5-hour history fix.** Go’s rolling window and Codex’s primary window
-  advance their reset with time, so fixed-cycle charts fragmented. They now use
-  a trailing 5h frame with a 2h projection; fixed windows keep cycle charts.
-- **Forecast replay.** `qbar --forecast-backtest` scores fixed cycles only,
-  causally, with censoring; `insufficient_data` is expected. See
-  [docs/FORECAST.md](docs/FORECAST.md).
+- **Rolling 5-hour fix.** Go’s rolling window and Codex’s primary window advance
+  their reset with time, so fixed-cycle charts and sparklines fragmented. Both
+  now use a trailing 5h frame with a 2h projection; fixed windows keep cycle
+  charts. Alerts on these windows are once per **episode** (re-armed below 85%),
+  so an advancing reset can no longer re-fire a warning.
+- **Forecast replay.** `qbar --forecast-backtest` scores fixed 5-hour cycles only,
+  causally, with censoring; rolling windows are reported as not evaluated and
+  `insufficient_data` is expected. See [docs/FORECAST.md](docs/FORECAST.md).
 
 ## What's new in 0.9 — agent status
 
@@ -221,7 +223,7 @@ the store. No third-party servers, no analytics, no tracking.
 Requires macOS 13+, Xcode 15+ / Swift 5.9+.
 
 ```sh
-swift test          # parsers, store, cycles, forecasts, alerts, replay (91 tests)
+swift test          # parsers, store, cycles, forecasts, alerts, replay (110 tests)
 make app            # -> QuotaBar.app (LSUIElement, menu-bar only)
 make run            # launch
 make install        # build and replace /Applications/QuotaBar.app, relaunch

@@ -200,7 +200,16 @@ struct PopoverView: View {
         let windows = model.snapshots[provider]?.windows ?? []
         let window = windows.first { $0.windowMinutes == 300 && ($0.kind == .rolling || $0.kind == .primary) }
             ?? model.snapshots[provider]?.limiting
-        guard let window, let trend = model.cycleTrend(for: provider, window: window) else { return nil }
+        guard let window else { return nil }
+        // Sliding windows have no stable cycle boundary: their preview is the
+        // trailing five hours of observations, not a reset-bounded cycle.
+        if model.isRollingWindow(provider, window) {
+            let now = Date()
+            let points = model.trailingSamples(for: provider, window: window, now: now)
+            guard points.count >= 2 else { return nil }
+            return (points, now.addingTimeInterval(-5 * 3_600), now, "Last 5 hours")
+        }
+        guard let trend = model.cycleTrend(for: provider, window: window) else { return nil }
         return (trend.points, trend.cycle.start, trend.cycle.end, cycleLabel(window.windowMinutes))
     }
 

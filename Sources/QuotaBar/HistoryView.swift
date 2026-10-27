@@ -56,7 +56,7 @@ struct HistoryView: View {
             .font(.caption2)
             .foregroundStyle(.secondary)
 
-            Text("Each chart covers one quota cycle, from window start to reset. Forecasts are experimental estimates based on recent usage; they may change as your pace changes and never trigger alerts.")
+            Text("Fixed windows are charted per quota cycle, from window start to reset. Rolling 5-hour windows are charted as the last five hours. Forecasts are experimental estimates based on recent usage; they may change as your pace changes and never trigger alerts.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -69,11 +69,11 @@ struct HistoryView: View {
         HStack(alignment: .firstTextBaseline) {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Quota History").font(.title2.weight(.semibold))
-                Text("How this cycle is being spent.")
+                Text("How this window is being spent.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
-            Text("Cycle view")
+            Text("Window history")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 10).padding(.vertical, 4)

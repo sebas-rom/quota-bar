@@ -38,6 +38,22 @@ public enum ProviderPresentation: Equatable, Sendable {
     case available
     case degraded
     case needsAttention
+
+    /// Pure state matrix: a probe failure never makes a provider disappear, and
+    /// an unknown initial state is never presented as configured.
+    public static func resolve(hasSnapshot: Bool, health: HealthState?) -> ProviderPresentation {
+        if hasSnapshot {
+            switch health {
+            case .ok?: return .available
+            default: return .degraded
+            }
+        }
+        switch health {
+        case nil: return .checking
+        case .noCredentials?: return .unconfigured
+        default: return .needsAttention
+        }
+    }
 }
 
 // MARK: - Model
@@ -209,9 +225,7 @@ public final class QuotaModel: ObservableObject {
     /// frame would fragment their samples. Go's rolling 5h and Codex's primary
     /// 5h window behave this way; Command Code's 5h window is fixed.
     public func isRollingWindow(_ provider: ProviderID, _ window: QuotaWindow) -> Bool {
-        guard window.windowMinutes == 300 else { return false }
-        return (provider == .go && window.id == "go.rolling")
-            || (provider == .codex && window.id == "codex.primary")
+        WindowSemantics.isRolling(provider: provider, window: window)
     }
 
     public func trailingSamples(
@@ -460,6 +474,10 @@ public final class QuotaModel: ObservableObject {
 
     /// The single worst window worth surfacing above the cards.
     public var headsUp: HeadsUp? {
+        headsUp(now: Date())
+    }
+
+    public func headsUp(now: Date) -> HeadsUp? {
         var best: (ProviderID, QuotaWindow)?
         for provider in ProviderID.allCases {
             guard let snapshot = snapshots[provider] else { continue }
@@ -476,22 +494,23 @@ public final class QuotaModel: ObservableObject {
         guard let (provider, window) = best else { return nil }
         guard window.isLimited || window.percent >= AlertRules.warningThreshold else { return nil }
         let kind: AlertKind = window.isLimited ? .limit : .warning
+        var text = AlertRules.message(provider: provider, window: window, kind: kind, now: now)
+        if staleness(for: provider, now: now) != nil {
+            text += " Last reading is not current."
+        }
         return HeadsUp(
             provider: provider,
             window: window,
-            text: AlertRules.message(provider: provider, window: window, kind: kind),
+            text: text,
             isLimit: window.isLimited
         )
     }
 
     public func presentation(for provider: ProviderID) -> ProviderPresentation {
-        let snapshot = snapshots[provider]
-        let health = health[provider]
-        if snapshot == nil && health == nil { return .checking }
-        if snapshot == nil, health?.state == .noCredentials { return .unconfigured }
-        if snapshot == nil { return .needsAttention }
-        if health?.state == .ok { return .available }
-        return .degraded
+        ProviderPresentation.resolve(
+            hasSnapshot: snapshots[provider] != nil,
+            health: health[provider]?.state
+        )
     }
 
     public var setupProviders: [ProviderID] {

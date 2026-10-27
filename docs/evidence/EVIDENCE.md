@@ -67,6 +67,9 @@ the narrowest supported presentation; the History window has a 520 pt minimum.
 - Unconfigured providers collapse into one setup card; the setup capture shows a
   Codex-only install.
 - Rolling 5-hour windows use a trailing frame; fixed windows keep cycle charts.
+- The demo fixture advances Go’s rolling reset between samples, which is the
+  moving-reset case: the popover preview still shows five hours of samples
+  (`Last 5 hours`) and History shows the rolling subtitle instead of a cycle.
 - Ad-hoc builds deliver alerts through a floating panel instead of Notification
   Center; the popover now paints an explicit system background so light mode
   cannot inherit a dark wallpaper-tinted material.

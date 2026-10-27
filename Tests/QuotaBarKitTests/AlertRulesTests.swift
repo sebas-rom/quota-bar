@@ -152,3 +152,121 @@ final class AlertCoalescerTests: XCTestCase {
         XCTAssertNil(AlertCoalescer.best([]))
     }
 }
+
+final class RollingAlertTests: XCTestCase {
+    private let now = Date(timeIntervalSince1970: 1_793_100_000)
+
+    private func snapshot(
+        percent: Double,
+        reset: Date,
+        limited: Bool = false,
+        provider: ProviderID = .go,
+        windowID: String = "go.rolling"
+    ) -> ProviderSnapshot {
+        ProviderSnapshot(
+            provider: provider,
+            windows: [QuotaWindow(
+                id: windowID, kind: .rolling, label: "5-hour",
+                percent: percent, resetsAt: reset, windowMinutes: 300, isLimited: limited
+            )],
+            origin: .network,
+            source: "test",
+            observedAt: now
+        )
+    }
+
+    /// The release blocker: a sliding reset must never re-arm the warning.
+    func testAdvancingResetFiresExactlyOneWarning() {
+        var state = AlertState()
+        var delivered: [AlertDecision] = []
+        for step in 0..<3 {
+            let reset = now.addingTimeInterval(3_600 + Double(step) * 300)
+            delivered += AlertRules.evaluate(snapshot(percent: 93, reset: reset), state: &state, now: now)
+        }
+        XCTAssertEqual(delivered.count, 1)
+        XCTAssertEqual(delivered.first?.kind, .warning)
+    }
+
+    func testRecoveryRearmsSlidingWarning() {
+        var state = AlertState()
+        let reset = now.addingTimeInterval(3_600)
+        XCTAssertEqual(AlertRules.evaluate(snapshot(percent: 93, reset: reset), state: &state, now: now).count, 1)
+        XCTAssertTrue(AlertRules.evaluate(snapshot(percent: 80, reset: reset), state: &state, now: now).isEmpty)
+        XCTAssertEqual(AlertRules.evaluate(snapshot(percent: 91, reset: reset), state: &state, now: now).count, 1)
+    }
+
+    func testSlidingLimitFiresOnceAndIndependently() {
+        var state = AlertState()
+        let reset = now.addingTimeInterval(3_600)
+        let warning = AlertRules.evaluate(snapshot(percent: 92, reset: reset), state: &state, now: now)
+        XCTAssertEqual(warning.map(\.kind), [.warning])
+
+        let first = AlertRules.evaluate(snapshot(percent: 100, reset: reset, limited: true), state: &state, now: now)
+        XCTAssertEqual(first.map(\.kind), [.limit])
+        let repeated = AlertRules.evaluate(
+            snapshot(percent: 100, reset: reset.addingTimeInterval(300), limited: true),
+            state: &state, now: now
+        )
+        XCTAssertTrue(repeated.isEmpty)
+    }
+
+    func testFixedCycleStillUsesResetKey() {
+        var state = AlertState()
+        let snapshot234 = ProviderSnapshot(
+            provider: .commandCode,
+            windows: [QuotaWindow(id: "commandcode.5h", kind: .primary, label: "5-hour",
+                                  percent: 94, resetsAt: now.addingTimeInterval(3_600),
+                                  windowMinutes: 300, isLimited: false)],
+            origin: .network, source: "test", observedAt: now
+        )
+        XCTAssertEqual(AlertRules.evaluate(snapshot234, state: &state, now: now).count, 1)
+        XCTAssertTrue(AlertRules.evaluate(snapshot234, state: &state, now: now).isEmpty)
+    }
+
+    func testLegacyStateWithoutRollingFieldsDecodes() {
+        let legacy = #"{"warned":{"codex.primary":"r1"},"limitWarned":{}}"#
+        let state = try? JSONDecoder().decode(AlertState.self, from: Data(legacy.utf8))
+        XCTAssertEqual(state?.warned["codex.primary"], "r1")
+        XCTAssertEqual(state?.rollingWarned, [])
+    }
+}
+
+final class ProviderPresentationTests: XCTestCase {
+    func testNoSnapshotNoHealthIsChecking() {
+        XCTAssertEqual(ProviderPresentation.resolve(hasSnapshot: false, health: nil), .checking)
+    }
+
+    func testMissingCredentialsIsUnconfigured() {
+        XCTAssertEqual(ProviderPresentation.resolve(hasSnapshot: false, health: .noCredentials), .unconfigured)
+    }
+
+    func testSnapshotWithOKIsAvailable() {
+        XCTAssertEqual(ProviderPresentation.resolve(hasSnapshot: true, health: .ok), .available)
+    }
+
+    func testSnapshotWithAuthFailureStaysVisibleAsDegraded() {
+        XCTAssertEqual(ProviderPresentation.resolve(hasSnapshot: true, health: .authFailed), .degraded)
+        XCTAssertEqual(ProviderPresentation.resolve(hasSnapshot: true, health: nil), .degraded)
+    }
+
+    func testLocalSnapshotWithoutCredentialsStaysVisible() {
+        XCTAssertEqual(ProviderPresentation.resolve(hasSnapshot: true, health: .noCredentials), .degraded)
+    }
+
+    func testFailureWithoutSnapshotNeedsAttention() {
+        XCTAssertEqual(ProviderPresentation.resolve(hasSnapshot: false, health: .providerDown), .needsAttention)
+        XCTAssertEqual(ProviderPresentation.resolve(hasSnapshot: false, health: .offline), .needsAttention)
+    }
+
+    func testRollingClassificationIsShared() {
+        let go = QuotaWindow(id: "go.rolling", kind: .rolling, label: "5-hour",
+                             percent: 10, resetsAt: nil, windowMinutes: 300, isLimited: false)
+        let codex = QuotaWindow(id: "codex.primary", kind: .primary, label: "Primary",
+                                percent: 10, resetsAt: nil, windowMinutes: 300, isLimited: false)
+        let cc = QuotaWindow(id: "commandcode.5h", kind: .primary, label: "5-hour",
+                             percent: 10, resetsAt: nil, windowMinutes: 300, isLimited: false)
+        XCTAssertTrue(WindowSemantics.isRolling(provider: .go, window: go))
+        XCTAssertTrue(WindowSemantics.isRolling(provider: .codex, window: codex))
+        XCTAssertFalse(WindowSemantics.isRolling(provider: .commandCode, window: cc))
+    }
+}

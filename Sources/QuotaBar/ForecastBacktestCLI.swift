@@ -6,15 +6,26 @@ import QuotaBarKit
 // or reads credentials. `insufficient_data` is the expected initial result.
 
 enum ForecastBacktestCLI {
-    // Rolling windows (Go 5h, Codex primary) advance their reset with time and
-    // have no fixed cycle to score; only fixed-cycle windows are replayed.
+    // The shipped forecast only exists for 5-hour windows, so only fixed-cycle
+    // 5-hour windows are scored. Weekly/monthly projections are not shown in the
+    // app, and monthly cycles cannot accumulate 20 samples within retention.
     private static let windows: [(ProviderID, String, Int)] = [
-        (.go, "go.weekly", 10_080),
-        (.go, "go.monthly", 43_200),
-        (.codex, "codex.secondary", 10_080),
         (.commandCode, "commandcode.5h", 300),
-        (.commandCode, "commandcode.weekly", 10_080),
-        (.commandCode, "commandcode.monthly", 43_200),
+    ]
+
+    // Sliding windows have no fixed cycle boundary to score without inventing
+    // an outcome contract; they are disclosed, not silently dropped.
+    private static let notEvaluated: [BacktestNotEvaluated] = [
+        BacktestNotEvaluated(
+            provider: ProviderID.go.rawValue,
+            windowId: "go.rolling",
+            reason: "rolling 5-hour window: reset advances with time, no fixed cycle to score"
+        ),
+        BacktestNotEvaluated(
+            provider: ProviderID.codex.rawValue,
+            windowId: "codex.primary",
+            reason: "rolling 5-hour window: reset advances with time, no fixed cycle to score"
+        ),
     ]
 
     static func run() -> Never {
@@ -38,7 +49,7 @@ enum ForecastBacktestCLI {
                 now: now
             )
         }
-        let report = ForecastBacktest.report(groups: groups, now: now)
+        let report = ForecastBacktest.report(groups: groups, notEvaluated: notEvaluated, now: now)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         encoder.dateEncodingStrategy = .iso8601

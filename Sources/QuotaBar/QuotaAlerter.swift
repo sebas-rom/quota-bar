@@ -48,6 +48,7 @@ final class QuotaAlerter: NSObject, ObservableObject, UNUserNotificationCenterDe
         guard on else {
             enabled = false
             issue = nil
+            pending = []
             defaults.set(false, forKey: enabledKey)
             return
         }
@@ -95,6 +96,7 @@ final class QuotaAlerter: NSObject, ObservableObject, UNUserNotificationCenterDe
 
     func setProvider(_ provider: ProviderID, enabled: Bool) {
         providerEnabled[provider] = enabled
+        if !enabled { pending.removeAll { $0.provider == provider } }
         let saved = Dictionary(uniqueKeysWithValues: providerEnabled.map { ($0.key.rawValue, $0.value) })
         defaults.set(saved, forKey: providersKey)
     }
@@ -118,7 +120,13 @@ final class QuotaAlerter: NSObject, ObservableObject, UNUserNotificationCenterDe
     }
 
     private func flushPending() {
-        guard let batch = AlertCoalescer.best(pending) else { return }
+        // Preferences can change during the coalescing window; never deliver a
+        // decision the user just disabled.
+        pending.removeAll { !enabled || !isEnabled(for: $0.provider) }
+        guard let batch = AlertCoalescer.best(pending) else {
+            pending = []
+            return
+        }
         pending = []
         let text = batch.additionalCount > 0
             ? "\(batch.decision.message) (+\(batch.additionalCount) more)"

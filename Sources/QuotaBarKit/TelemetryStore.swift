@@ -358,7 +358,7 @@ public final class TelemetryStore: @unchecked Sendable {
             let sql = """
             SELECT observed_at, percent, resets_at, origin FROM sample
             WHERE provider = ? AND window_id = ? AND observed_at >= ? AND origin = 'network'
-            ORDER BY observed_at ASC LIMIT 20000
+            ORDER BY observed_at DESC LIMIT 20000
             """
             var stmt: OpaquePointer?
             guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
@@ -377,7 +377,9 @@ public final class TelemetryStore: @unchecked Sendable {
                     origin: .network
                 ))
             }
-            return out
+            // Selected newest-first so the cap drops the oldest rows, then
+            // restored to chronological order for the replay.
+            return out.reversed()
         } ?? []
     }
 
