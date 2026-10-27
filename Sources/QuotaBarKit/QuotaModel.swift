@@ -371,9 +371,17 @@ public final class QuotaModel: ObservableObject {
     public var goKeySourceText: String {
         if isDemo { return "demo data" }
         if let snapshot = snapshots[.go], snapshot.origin == .network { return snapshot.source }
-        if loadKeychainKey(account: quotaBarGoAccount) != nil { return "Keychain (saved)" }
+        if FileManager.default.fileExists(atPath: goKeyConfigURL().path) { return "cached key file" }
         if !goKeyCandidates().isEmpty { return "opencode auth.json" }
         return "none"
+    }
+
+    /// Non-prompting check for the UI. The cached file is authoritative once it
+    /// exists; only fall back to the candidate chain (which may read Keychain
+    /// once to migrate) when there is no file.
+    public var hasSavedGoKey: Bool {
+        if FileManager.default.fileExists(atPath: goKeyConfigURL().path) { return true }
+        return !goKeyCandidates().isEmpty
     }
 
     // MARK: demo

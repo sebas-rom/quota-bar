@@ -250,7 +250,7 @@ struct PopoverView: View {
                     NSWorkspace.shared.open(homeDir().appendingPathComponent(".local/share/opencode"))
                     NSWorkspace.shared.open(homeDir().appendingPathComponent(".codex"))
                 }
-                if !model.isDemo, loadKeychainKey(account: quotaBarGoAccount) != nil {
+                if !model.isDemo, model.hasSavedGoKey {
                     Button("Remove Saved Go Key…") { confirmRemoveKey = true }
                 }
                 if model.store != nil {
