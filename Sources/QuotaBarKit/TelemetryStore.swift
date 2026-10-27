@@ -37,16 +37,18 @@ public final class TelemetryStore: @unchecked Sendable {
         try TelemetryStore(path: URL(fileURLWithPath: "memory"), createDirectory: false, memory: true)
     }
 
-    public init(path: URL, createDirectory: Bool = true, memory: Bool = false) throws {
+    public init(path: URL, createDirectory: Bool = true, memory: Bool = false, readOnly: Bool = false) throws {
         self.path = memory ? ":memory:" : path.path
-        if createDirectory, !memory {
+        if createDirectory, !memory, !readOnly {
             try? FileManager.default.createDirectory(
                 at: path.deletingLastPathComponent(),
                 withIntermediateDirectories: true
             )
         }
         var handle: OpaquePointer?
-        let flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX
+        let flags: Int32 = readOnly
+            ? SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX
+            : SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX
         let rc = sqlite3_open_v2(memory ? ":memory:" : path.path, &handle, flags, nil)
         guard rc == SQLITE_OK, let handle else {
             let message = handle.map { String(cString: sqlite3_errmsg($0)) } ?? "sqlite open failed (\(rc))"
@@ -54,12 +56,16 @@ public final class TelemetryStore: @unchecked Sendable {
             throw StoreError.open(message)
         }
         db = handle
-        try exec("PRAGMA journal_mode=WAL")
-        try exec("PRAGMA synchronous=NORMAL")
-        try exec("PRAGMA busy_timeout=2000")
-        try migrate()
-        if let cutoff = meta("history_cleared_at").flatMap(Double.init) {
-            clearedAt = Date(timeIntervalSince1970: cutoff)
+        if readOnly {
+            try exec("PRAGMA busy_timeout=2000")
+        } else {
+            try exec("PRAGMA journal_mode=WAL")
+            try exec("PRAGMA synchronous=NORMAL")
+            try exec("PRAGMA busy_timeout=2000")
+            try migrate()
+            if let cutoff = meta("history_cleared_at").flatMap(Double.init) {
+                clearedAt = Date(timeIntervalSince1970: cutoff)
+            }
         }
     }
 
@@ -290,6 +296,55 @@ public final class TelemetryStore: @unchecked Sendable {
                     percent: sqlite3_column_double(stmt, 1),
                     resetsAt: reset,
                     origin: SnapshotOrigin(rawValue: origin) ?? .network
+                ))
+            }
+            return out
+        } ?? []
+    }
+
+    public struct LatestObservation: Equatable, Sendable {
+        public let provider: String
+        public let windowID: String
+        public let label: String
+        public let percent: Double
+        public let resetsAt: Date?
+        public let observedAt: Date
+        public let origin: String
+        public let plan: String?
+    }
+
+    /// Newest persisted observation per provider/window. Read-only friendly;
+    /// used by `--status-json`. Never includes credentials.
+    public func latestObservations() -> [LatestObservation] {
+        withLock { db in
+            let sql = """
+            SELECT provider, window_id, window_label, percent, resets_at, observed_at, origin, plan
+            FROM (
+                SELECT *, ROW_NUMBER() OVER (
+                    PARTITION BY provider, window_id ORDER BY observed_at DESC
+                ) AS rn
+                FROM sample
+            ) WHERE rn = 1
+            ORDER BY provider ASC, window_id ASC
+            """
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+            defer { sqlite3_finalize(stmt) }
+            var out: [LatestObservation] = []
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                func text(_ index: Int32) -> String? {
+                    sqlite3_column_text(stmt, index).map { String(cString: $0) }
+                }
+                out.append(LatestObservation(
+                    provider: text(0) ?? "",
+                    windowID: text(1) ?? "",
+                    label: text(2) ?? text(1) ?? "",
+                    percent: sqlite3_column_double(stmt, 3),
+                    resetsAt: sqlite3_column_type(stmt, 4) == SQLITE_NULL
+                        ? nil : Date(timeIntervalSince1970: sqlite3_column_double(stmt, 4)),
+                    observedAt: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 5)),
+                    origin: text(6) ?? "network",
+                    plan: text(7)
                 ))
             }
             return out

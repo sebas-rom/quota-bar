@@ -1,4 +1,8 @@
-# Signing & notarization (planned)
+# Signing & notarization (deliberately deferred)
+
+**Status: deferred by decision (2026-10-27).** See
+[`DECISIONS.md`](DECISIONS.md). This plan is ready to execute if that decision
+changes; nothing below is enabled in CI.
 
 QuotaBar currently ships **ad-hoc signed**. That is enough for Sparkle’s EdDSA
 archive verification, but it costs users real friction:

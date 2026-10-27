@@ -1,8 +1,10 @@
 # Installing QuotaBar
 
-QuotaBar is a macOS 13+ menu-bar app distributed as a signed ZIP. It is **not
-notarized yet**, so Gatekeeper will warn on first launch. This page documents the
-supported path; do not strip quarantine flags or bypass Gatekeeper.
+QuotaBar is a macOS 13+ menu-bar app distributed as a ZIP. **Notarization is
+deliberately deferred** while there is no Apple Developer membership
+([DECISIONS.md](docs/DECISIONS.md)), so Gatekeeper warns on first launch. This
+page documents the supported path; do not strip quarantine flags or bypass
+Gatekeeper.
 
 ## Requirements
 
@@ -40,7 +42,17 @@ for every future download and is not supported.
 
 ## Pin a version (agents / reproducible installs)
 
-Every stable tag carries the same two assets, so a pinned install never moves:
+Every stable tag carries the same two assets, so a pinned install never moves.
+
+Agents can read status without the GUI (after installing):
+
+```sh
+/Applications/QuotaBar.app/Contents/MacOS/qbar --status-json
+```
+
+It exits 0 with a timestamped JSON document and 2 with an error document. See
+[docs/STATUS.md](docs/STATUS.md). It never prints credentials and never triggers
+a network probe.
 
 ```sh
 VERSION=0.8.0
@@ -106,5 +118,6 @@ or Keychain Access (`com.quota.bar`). Other apps’ credentials are untouched.
 
 ## Homebrew
 
-A cask is planned **after** Developer ID signing and notarization. Until then,
-there is no supported `brew install` command and no `curl | bash` installer.
+A cask is deferred with notarization: an unnotarized cask would need quarantine
+weakening. There is deliberately no `brew install` command and no `curl | bash`
+installer until that decision changes.
