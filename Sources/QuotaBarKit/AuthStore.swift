@@ -99,16 +99,22 @@ public func goKeyCandidates() -> [KeyCandidate] {
         if !out.contains(where: { $0.key == k }) { out.append(KeyCandidate(source: source, key: k)) }
     }
     // 1. Cached file first: no Keychain prompt, survives ad-hoc rebuilds.
+    var fileHadKey = false
     if let data = try? Data(contentsOf: goKeyConfigURL()),
-       let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-        add("config file", obj["apiKey"] as? String)
+       let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+       let key = obj["apiKey"] as? String,
+       !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        add("config file", key)
+        fileHadKey = true
     }
-    // 2. Keychain. Migrate to the file once so the next update stays prompt-free.
-    let keychainKey = loadKeychainKey(account: quotaBarGoAccount)
-    add("Keychain", keychainKey)
-    if let keychainKey,
-       !FileManager.default.fileExists(atPath: goKeyConfigURL().path) {
-        _ = saveGoKeyFile(keychainKey)
+    // 2. Keychain only when the file has no key. Migrate once, so the next
+    // update/build reads the file and never triggers the system prompt again.
+    if !fileHadKey {
+        let keychainKey = loadKeychainKey(account: quotaBarGoAccount)
+        add("Keychain", keychainKey)
+        if let keychainKey {
+            _ = saveGoKeyFile(keychainKey)
+        }
     }
     let env = ProcessInfo.processInfo.environment
     add("env var", env["OPENCODE_GO_API_KEY"])
