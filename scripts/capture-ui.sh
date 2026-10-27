@@ -11,5 +11,6 @@ make app
 
 rm -f "$OUT"/*.png
 ./QuotaBar.app/Contents/MacOS/QuotaBar --render-evidence "$OUT"
+cp Resources/AppIcon-1024.png "$OUT/app-icon.png"
 
 echo "Evidence written to $OUT"

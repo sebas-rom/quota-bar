@@ -48,7 +48,7 @@ enum DemoData {
                 linear(t, from: 30, to: 38)
             },
             Series(id: "go.monthly", label: "Monthly", provider: .go, minutes: 43_200, reset: now.addingTimeInterval(12 * 86_400)) { t in
-                linear(t, from: 57, to: 61)
+                linear(t, from: 89, to: 93)
             },
             Series(id: "codex.primary", label: "5-hour", provider: .codex, minutes: 300, reset: codexPrimaryReset) { t in
                 saw(t, end: codexPrimaryReset, windowSeconds: 18_000, base: 4, amp: 60)
@@ -87,7 +87,7 @@ enum DemoData {
                 QuotaWindow(id: "go.weekly", kind: .weekly, label: "Weekly",
                             percent: 38, resetsAt: now.addingTimeInterval(3 * 86_400 + 4 * 3_600), windowMinutes: 10_080, isLimited: false),
                 QuotaWindow(id: "go.monthly", kind: .monthly, label: "Monthly",
-                            percent: 61, resetsAt: now.addingTimeInterval(12 * 86_400), windowMinutes: 43_200, isLimited: false),
+                            percent: 93, resetsAt: now.addingTimeInterval(3 * 86_400), windowMinutes: 43_200, isLimited: false),
             ],
             plan: nil,
             origin: .demo,

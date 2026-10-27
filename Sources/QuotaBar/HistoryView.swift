@@ -132,7 +132,7 @@ struct ProviderHistorySection: View {
                     .accessibilityHidden(true)
                 Text(provider.displayName).font(.headline)
                 if let plan = snapshot?.plan {
-                    Text(plan.capitalized)
+                    Text(displayPlan(plan))
                         .font(.caption).foregroundStyle(.secondary)
                         .padding(.horizontal, 5).padding(.vertical, 1)
                         .background(.quaternary.opacity(0.5), in: Capsule())
