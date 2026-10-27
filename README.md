@@ -118,7 +118,8 @@ every quota row and chart.
 - **Clear History** is permanent: it records a deletion cutoff, so re-reading the
   Codex log (relaunch or offline fallback) cannot bring deleted observations back.
 - Updates are EdDSA-signed but the app is unsigned/not notarized; a Developer ID
-  remains the next distribution step.
+  remains the next distribution step. Release mechanics and recovery are in
+  [docs/RELEASING.md](docs/RELEASING.md).
 - Nightly builds use the same short version with a timestamp build number, so
   switching back to stable only offers a downgrade when a newer stable exists.
 
