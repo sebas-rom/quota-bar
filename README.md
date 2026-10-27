@@ -61,6 +61,23 @@ Go states are explicit: ready (5h/7d/30d + resets), no key, rejected 401,
 no-subscription 403, rate-limited 429, provider 5xx, offline, unexpected.
 `rate-limited` counts as real quota; missing windows are never shown as 0%.
 
+## Updates
+
+Releases are delivered with **Sparkle 2** from one appcast, split into channels:
+
+- **Stable** — tagged releases only (default).
+- **Nightly** — every build from `main`, offered only if you switch channel in the
+  ⋯ menu (*Update channel → Nightly*).
+
+*Check for Updates…* lives in the ⋯ menu; automatic checks are on by default
+(daily) and can be turned off there. Update archives are signed with EdDSA and
+verified against the public key embedded in the app. The app itself is not
+notarized yet, so Gatekeeper still applies to the first manual install.
+
+Working from a clone, `make update` remains the fastest path (fast-forward,
+build, install, relaunch). The first build with Sparkle must be installed
+manually once; every update after that can arrive in-app.
+
 ## Privacy
 
 Local-only. QuotaBar talks directly to the two provider APIs above using tokens
@@ -100,9 +117,11 @@ every quota row and chart.
   so switching accounts never blends live history.
 - **Clear History** is permanent: it records a deletion cutoff, so re-reading the
   Codex log (relaunch or offline fallback) cannot bring deleted observations back.
-- No in-app auto-update yet: released builds are re-downloaded, and working
-  from a clone uses `make update` (fast-forward + build + install + relaunch).
-  Signed in-app updates are the next packaging step.
+- Updates are EdDSA-signed but the app is unsigned/not notarized; a Developer ID
+  remains the next distribution step. Release mechanics and recovery are in
+  [docs/RELEASING.md](docs/RELEASING.md).
+- Nightly builds use the same short version with a timestamp build number, so
+  switching back to stable only offers a downgrade when a newer stable exists.
 
 ## Collaborate
 

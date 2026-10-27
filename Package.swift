@@ -7,6 +7,9 @@ let package = Package(
     products: [
         .executable(name: "QuotaBar", targets: ["QuotaBar"])
     ],
+    dependencies: [
+        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.6.0"),
+    ],
     targets: [
         .target(
             name: "QuotaBarKit",
@@ -14,8 +17,14 @@ let package = Package(
         ),
         .executableTarget(
             name: "QuotaBar",
-            dependencies: ["QuotaBarKit"],
-            path: "Sources/QuotaBar"
+            dependencies: [
+                "QuotaBarKit",
+                .product(name: "Sparkle", package: "Sparkle"),
+            ],
+            path: "Sources/QuotaBar",
+            linkerSettings: [
+                .unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"]),
+            ]
         ),
         .testTarget(
             name: "QuotaBarKitTests",

@@ -9,7 +9,7 @@ import QuotaBarKit
 // Popover: current windows, 24h trend, provenance and freshness.
 // History: a real window with range charts over the local observation store.
 
-private let appVersion = "0.4.0"
+private let appVersion = "0.4.1"
 
 @MainActor
 enum AppEnvironment {
@@ -69,6 +69,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DemoHost.shared.present(model: model)
             return
         }
+        // Start Sparkle with the app so automatic checks do not depend on the
+        // popover ever being opened.
+        _ = UpdateController.shared
         model.start()
         wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didWakeNotification,
@@ -93,6 +96,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 struct PopoverView: View {
     @ObservedObject var model: QuotaModel
+    @ObservedObject private var updates = UpdateController.shared
     @Binding var launchAtLogin: Bool
     /// Evidence snapshots render the content without presentation modifiers,
     /// which ImageRenderer cannot lay out reliably.
@@ -211,6 +215,22 @@ struct PopoverView: View {
                     Button("Clear History…") { confirmClearHistory = true }
                 }
                 Divider()
+                Button("Check for Updates…") { updates.checkForUpdates() }
+                Toggle("Check automatically", isOn: $updates.automaticChecks)
+                Menu("Update channel") {
+                    ForEach(UpdateChannel.allCases) { channel in
+                        Button {
+                            updates.setChannel(channel)
+                        } label: {
+                            if updates.channel == channel {
+                                Label(channel.title, systemImage: "checkmark")
+                            } else {
+                                Text(channel.title)
+                            }
+                        }
+                    }
+                }
+                Divider()
                 Button("About QuotaBar") { showAbout = true }
                 Button("Quit QuotaBar") { NSApplication.shared.terminate(nil) }
                     .keyboardShortcut("q")
@@ -303,6 +323,8 @@ struct PopoverView: View {
             Text("Codex fallback: ~/.codex/sessions").font(.caption).monospaced()
             Text("Go key source: \(model.goKeySourceText)").font(.caption).foregroundStyle(.secondary)
             Text("History: 90 days of observations in ~/Library/Application Support/QuotaBar. No prompts, tokens or account identities are stored, and nothing leaves this Mac.")
+                .font(.caption).foregroundStyle(.secondary)
+            Text("Updates: \(updates.channel.title.lowercased()) channel · Sparkle, EdDSA-signed")
                 .font(.caption).foregroundStyle(.secondary)
             HStack {
                 Spacer()

@@ -22,6 +22,13 @@ QuotaBar stays deliberately small:
 
 Proposals outside this scope will be politely declined — that's a feature, not a bug.
 
+### Release signing
+
+Updates are signed with Sparkle's EdDSA key. The public key lives in
+`Info.plist` (`SUPublicEDKey`); the private key is the `SPARKLE_PRIVATE_KEY`
+GitHub Actions secret and must never be committed. Losing it means users have to
+reinstall manually.
+
 ## Workflow
 
 ```sh
