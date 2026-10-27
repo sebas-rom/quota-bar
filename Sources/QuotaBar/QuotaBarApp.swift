@@ -9,7 +9,7 @@ import QuotaBarKit
 // Popover: current windows, 24h trend, provenance and freshness.
 // History: a real window with range charts over the local observation store.
 
-private let appVersion = "0.7.0"
+private let appVersion = "0.8.0"
 
 @MainActor
 enum AppEnvironment {

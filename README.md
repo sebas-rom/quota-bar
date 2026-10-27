@@ -6,14 +6,28 @@
 [![Swift](https://img.shields.io/badge/swift-5.9-orange)](https://github.com/sebas-rom/quota-bar)
 
 Three AI stacks, one glance. A native macOS menu-bar for **opencode-go, Codex and
-Command Code quota** that now *remembers*: 24-hour trends, a local observation store, and a
-history window — still local-first, still no browser or keychain scraping.
+Command Code quota** that remembers: cycle-first history, a local observation
+store, and a forecast you can see — still local-first, still no browser or
+keychain scraping.
 
-Menu shows e.g. `Go 74% · Cx 22%`. Click for two provider cards with per-window
-percentages, reset countdowns, a 24-hour sparkline and the freshness of what
-you are looking at.
+Menu shows e.g. `Go 74% · Cx 22% · CC 11%`. Click for three provider cards with
+per-window percentages, reset countdowns, a current-cycle sparkline and the
+freshness of what you are looking at.
 
 ![Popover](docs/evidence/popover-light.png)
+
+## What's new in 0.8 — a trustworthy download
+
+- **Direct download**: `releases/latest/download/QuotaBar.zip` now resolves to the
+  latest stable build (byte-identical to the versioned asset).
+- **Checksums**: every stable release publishes `checksums.txt` (SHA-256 for both
+  the versioned ZIP and the `QuotaBar.zip` alias).
+- **[INSTALL.md](INSTALL.md)**: real first-launch behavior, checksum verification,
+  uninstall, and agent-safe instructions. No `curl | bash`, no quarantine
+  bypasses.
+- **Notarization is not done yet.** Gatekeeper still warns on first launch on a
+  normal Mac; INSTALL.md explains the supported path (right-click → Open).
+  Developer ID signing is the next distribution step.
 
 ## What's new in 0.7 — cycle-first history
 
@@ -69,8 +83,8 @@ nothing. Forecasts never drive notifications, charts, or provider switching.
 - **App-owned sampling.** The 5-minute refresh lives in the app, not in the
   popover, so history accrues with the window closed and refreshes on wake.
 - **Local history.** Every observation is stored in a small SQLite database
-  (90-day retention) and charted in a real **History window**: 24 hours or 7
-  days, one chart per quota window, fixed 0–100 scale so windows stay comparable.
+  (90-day retention) and charted in a real **History window** (cycle-first since
+  0.7): one chart per quota window, from window start to reset.
 - **Last-known-good wins.** A failed probe no longer blanks the card. The last
   successful observation stays, with its age and source ("offline · showing
   12m ago"). Missing windows are still never rendered as 0%.
@@ -90,9 +104,24 @@ nothing. Forecasts never drive notifications, charts, or provider switching.
 
 ## Install
 
-Download [**QuotaBar.zip**](https://github.com/sebas-rom/quota-bar/releases/latest),
-unzip, drag `QuotaBar.app` to `/Applications`, launch. Toggle **Launch at login**
-in the ⋯ menu. No setup needed if your keys are already on disk (see below).
+[**Download QuotaBar.zip**](https://github.com/sebas-rom/quota-bar/releases/latest/download/QuotaBar.zip)
+(macOS 13+), unzip, move `QuotaBar.app` to `/Applications`, and open it.
+
+Verify the download first:
+
+```sh
+curl -fLO https://github.com/sebas-rom/quota-bar/releases/latest/download/checksums.txt
+grep '  QuotaBar.zip$' checksums.txt | shasum -a 256 -c -
+```
+
+The build is **not notarized yet**, so a normal Mac shows Gatekeeper’s
+“unidentified developer” prompt on first launch: right-click the app → **Open**,
+or use System Settings → Privacy & Security → **Open Anyway**. Do not strip
+quarantine with `xattr`; that defeats the protection and is not the supported
+path. Full details and agent instructions: [INSTALL.md](INSTALL.md).
+
+No setup is needed if your keys are already on disk (see below). Toggle
+**Launch at login** in the ⋯ menu.
 
 ## Data sources (read-only, except the key you choose to save)
 
@@ -145,7 +174,7 @@ the store. No third-party servers, no analytics, no tracking.
 Requires macOS 13+, Xcode 15+ / Swift 5.9+.
 
 ```sh
-swift test          # parsers, store, snapshots, alerts (66 tests)
+swift test          # parsers, store, cycles, forecasts, alerts (81 tests)
 make app            # -> QuotaBar.app (LSUIElement, menu-bar only)
 make run            # launch
 make install        # build and replace /Applications/QuotaBar.app, relaunch
