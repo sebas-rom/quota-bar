@@ -30,6 +30,8 @@ swift test        # must stay green
 swift build -c release
 make app && make run   # smoke-test the installed bundle, light + dark mode
 ./scripts/capture-ui.sh   # refresh docs/evidence when UI changes
+make install              # replace /Applications/QuotaBar.app and relaunch
+make update               # pull + build + install (dev update loop)
 ```
 
 - Parser/decoder changes need mocked fixture tests in `Tests/QuotaBarKitTests` (see `GoUsageTests`: 0.5%-stays-0.5%, rate-limited, partial/malformed cases).

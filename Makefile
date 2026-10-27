@@ -13,6 +13,18 @@ app: build
 	cp Info.plist $(BUNDLE)/Contents/Info.plist
 	@echo "-> $(BUNDLE)"
 
+install: app
+	@pkill -x QuotaBar 2>/dev/null || true
+	@sleep 0.5
+	rm -rf /Applications/$(BUNDLE)
+	ditto $(BUNDLE) /Applications/$(BUNDLE)
+	open /Applications/$(BUNDLE)
+	@echo "-> /Applications/$(BUNDLE)"
+
+update:
+	git pull --ff-only
+	$(MAKE) install
+
 run: app
 	open $(BUNDLE)
 

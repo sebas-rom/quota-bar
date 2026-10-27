@@ -77,6 +77,8 @@ Requires macOS 13+, Xcode 15+ / Swift 5.9+.
 swift test          # parsers, store, snapshots (35 tests)
 make app            # -> QuotaBar.app (LSUIElement, menu-bar only)
 make run            # launch
+make install        # build and replace /Applications/QuotaBar.app, relaunch
+make update         # git pull --ff-only + make install
 make zip            # -> QuotaBar.zip (shareable)
 ./scripts/capture-ui.sh   # -> docs/evidence/*.png (offscreen, demo data)
 ```
@@ -98,7 +100,9 @@ every quota row and chart.
   so switching accounts never blends live history.
 - **Clear History** is permanent: it records a deletion cutoff, so re-reading the
   Codex log (relaunch or offline fallback) cannot bring deleted observations back.
-- No Sparkle auto-update — re-download the zip. Beta releases are unsigned.
+- No in-app auto-update yet: released builds are re-downloaded, and working
+  from a clone uses `make update` (fast-forward + build + install + relaunch).
+  Signed in-app updates are the next packaging step.
 
 ## Collaborate
 
