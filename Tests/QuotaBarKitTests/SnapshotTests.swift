@@ -76,7 +76,7 @@ final class SnapshotTests: XCTestCase {
     }
 
     func testAccountRefIsStableAndNotRaw() {
-        let raw = "923e6d72-8c3b-4155-a6b5-38365fd2579f"
+        let raw = "11111111-2222-3333-4444-555555555555"
         let ref = accountRef(raw)
         XCTAssertNotNil(ref)
         XCTAssertNotEqual(ref, raw)
