@@ -15,6 +15,23 @@ you are looking at.
 
 ![Popover](docs/evidence/popover-light.png)
 
+## What's new in 0.5 — identity + alerts
+
+- **Real identity.** A static monochrome **Q** monogram in the menu bar (no
+  dynamic state; the numbers already carry that) and a proper app icon in the
+  bundle, so Finder, the Dock and the History window stop showing a generic one.
+- **Quota alerts, deliberately small.** One opt-in toggle. At **90% used** per
+  window you get one notification per cycle, and a **limit reached** escalation
+  even if the warning already fired. No 75/97 tiers, no reset pings, no
+  cross-provider nudges; macOS Focus handles interruption.
+  - `Codex 5-hour quota is 90% used. Resets in 48 min.`
+  - `OpenCode Go weekly quota is 92% used. Resets in 2 days.`
+  - `Codex 5-hour limit reached. Resets in 18 min.`
+- **Heads-up in the popover.** Any window at or above 90% surfaces above the
+  cards with the same copy, whether or not notifications are allowed.
+- Alerts only fire on fresh network observations — never from stale local-log
+  fallbacks, history backfills, demo data or failed probes.
+
 ## What's new in 0.4 — "remembers"
 
 - **App-owned sampling.** The 5-minute refresh lives in the app, not in the
@@ -96,7 +113,7 @@ the store. No third-party servers, no analytics, no tracking.
 Requires macOS 13+, Xcode 15+ / Swift 5.9+.
 
 ```sh
-swift test          # parsers, store, snapshots (35 tests)
+swift test          # parsers, store, snapshots, alerts (66 tests)
 make app            # -> QuotaBar.app (LSUIElement, menu-bar only)
 make run            # launch
 make install        # build and replace /Applications/QuotaBar.app, relaunch
@@ -106,7 +123,7 @@ make zip            # -> QuotaBar.zip (shareable)
 ```
 
 Auto-refresh every 5 min, on wake, and on popover open + `R`. VoiceOver labels on
-every quota row and chart.
+every quota row and chart. Notifications are opt-in (`⋯ → Quota alerts`).
 
 ## Limits
 

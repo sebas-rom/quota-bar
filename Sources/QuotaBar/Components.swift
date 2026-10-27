@@ -23,6 +23,11 @@ func dotColor(_ name: String) -> Color {
     }
 }
 
+/// "plus" -> "Plus", but keep acronyms like "GOAT" intact.
+func displayPlan(_ plan: String) -> String {
+    plan == plan.uppercased() ? plan : plan.capitalized
+}
+
 func dotColor(for percent: Double?) -> String {
     guard let percent else { return "gray" }
     return usageColorName(for: percent)

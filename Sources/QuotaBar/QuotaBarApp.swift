@@ -9,7 +9,7 @@ import QuotaBarKit
 // Popover: current windows, 24h trend, provenance and freshness.
 // History: a real window with range charts over the local observation store.
 
-private let appVersion = "0.4.2"
+private let appVersion = "0.5.0"
 
 @MainActor
 enum AppEnvironment {
@@ -45,8 +45,15 @@ struct QuotaBarApp: App {
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
 
     var body: some Scene {
-        MenuBarExtra(model.barText, systemImage: "gauge") {
+        MenuBarExtra {
             PopoverView(model: model, launchAtLogin: $launchAtLogin)
+        } label: {
+            Label {
+                Text(model.barText)
+            } icon: {
+                Image(nsImage: MenuBarIcon.image)
+            }
+            .accessibilityLabel(model.barText)
         }
         .menuBarExtraStyle(.window)
     }
@@ -71,7 +78,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         // Start Sparkle with the app so automatic checks do not depend on the
         // popover ever being opened.
+        if let iconURL = Bundle.main.url(forResource: "QuotaBar", withExtension: "icns"),
+           let icon = NSImage(contentsOf: iconURL) {
+            NSApplication.shared.applicationIconImage = icon
+        }
         _ = UpdateController.shared
+        model.onNetworkSnapshot = { snapshot in
+            QuotaAlerter.shared.handle(snapshot)
+        }
         model.start()
         wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didWakeNotification,
@@ -97,6 +111,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 struct PopoverView: View {
     @ObservedObject var model: QuotaModel
     @ObservedObject private var updates = UpdateController.shared
+    @ObservedObject private var alerter = QuotaAlerter.shared
     @Binding var launchAtLogin: Bool
     /// Evidence snapshots render the content without presentation modifiers,
     /// which ImageRenderer cannot lay out reliably.
@@ -146,6 +161,20 @@ struct PopoverView: View {
 
     private var content: some View {
         VStack(alignment: .leading, spacing: Layout.cardSpacing) {
+            if let headsUp = model.headsUp {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: headsUp.isLimit ? "exclamationmark.octagon.fill" : "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                        .font(.caption)
+                    Text(headsUp.text)
+                        .font(.caption)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+                .accessibilityElement(children: .combine)
+            }
             ForEach(ProviderID.allCases, id: \.self) { provider in
                 ProviderCard(
                     provider: provider,
@@ -204,6 +233,16 @@ struct PopoverView: View {
                     Button("Clear History…") { confirmClearHistory = true }
                 }
                 Divider()
+                Toggle("Quota alerts", isOn: Binding(
+                    get: { alerter.enabled },
+                    set: { on in Task { await alerter.setEnabled(on) } }
+                ))
+                if alerter.enabled {
+                    Button("Send Test Notification") {
+                        Task { await alerter.sendTest() }
+                    }
+                }
+                Divider()
                 Button("Check for Updates…") { updates.checkForUpdates() }
                 Toggle("Check automatically", isOn: $updates.automaticChecks)
                 Menu("Update channel") {
@@ -251,8 +290,8 @@ struct PopoverView: View {
                     .foregroundStyle(.orange)
             }
             Spacer()
-            if let issue = model.storeIssue {
-                Text(issue).font(.caption2).foregroundStyle(.orange).lineLimit(1)
+            if let issue = model.storeIssue ?? alerter.issue {
+                Text(issue).font(.caption2).foregroundStyle(.orange).lineLimit(2)
             }
         }
     }
@@ -370,7 +409,7 @@ struct ProviderCard: View {
     }
 
     private var subtitle: String? {
-        if let plan = snapshot?.plan { return plan.capitalized }
+        if let plan = snapshot?.plan { return displayPlan(plan) }
         if snapshot?.origin == .localLog { return "local log" }
         return nil
     }

@@ -15,9 +15,13 @@ Command:
 | `popover-dark.png` | same, dark appearance | 320 × 559 |
 | `history-light.png` | `HistoryView` (History window content) | 620 × 767 |
 | `history-dark.png` | same, dark appearance | 620 × 767 |
+| `menubar-icon.png` | menu-bar template icon (6×) | 108 × 108 |
+| `app-icon.png` | app icon master | 1024 × 1024 |
 
-Each PNG is 2× (Retina). The data is synthetic and labelled "Demo data" in the
-popover footer.
+Each view PNG is 2× (Retina). The data is synthetic and labelled "Demo data" in
+the popover footer. The demo intentionally sets OpenCode Go monthly to 93% so the
+90%-used heads-up row is visible; the app icon master comes from
+`scripts/make-app-icon.swift`.
 
 ## Why offscreen
 
@@ -45,6 +49,15 @@ The UI copy is English-only and all dates/percentages use system formatters, so
 there is no second-locale layout risk. The popover is fixed-width (320 pt) and is
 the narrowest supported presentation; the History window has a 520 pt minimum.
 
+## Identity and alerts (v0.5)
+
+- The menu bar uses a static monochrome "Q" template image plus the numeric
+  label; no quota state is encoded in the icon.
+- The app bundle carries `Resources/QuotaBar.icns` via `CFBundleIconFile`.
+- Alerts are opt-in, request permission on enable, and are evaluated only for
+  fresh network snapshots. Live Notification Center delivery is **not** captured
+  here and still needs one manual toggle + test notification.
+
 ## Data-integrity checks covered by tests
 
 - Clear History records a deletion cutoff in the same transaction; older local
@@ -66,3 +79,7 @@ the narrowest supported presentation; the History window has a 520 pt minimum.
   the cleared history must stay empty (deletion cutoff + local-log rejection).
 - Quit and relaunch with the popover never opened: history still advances after
   five minutes (sampler is app-owned).
+- Enable *Quota alerts*, click *Send Test Notification*, confirm delivery; deny
+  permission once and confirm the in-app heads-up still works.
+- Menu bar: Q icon legible at 1×/2×, light and dark menu bars.
+- Finder/Dock show the app icon (History window activation shows it in the Dock).
