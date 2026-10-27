@@ -6,7 +6,7 @@ import QuotaBarKit
 // persisted dedupe state so relaunches never repeat a warning.
 
 @MainActor
-final class QuotaAlerter: ObservableObject {
+final class QuotaAlerter: NSObject, ObservableObject, UNUserNotificationCenterDelegate {
     static let shared = QuotaAlerter()
 
     @Published private(set) var enabled: Bool
@@ -17,8 +17,20 @@ final class QuotaAlerter: ObservableObject {
     private let enabledKey = "QuotaAlertsEnabled"
     private let stateKey = "QuotaAlertState"
 
-    private init() {
+    private override init() {
         enabled = defaults.bool(forKey: enabledKey)
+        super.init()
+        // Without a delegate, macOS silences notifications while the app is
+        // active — which is exactly when the test button is clicked.
+        center.delegate = self
+    }
+
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        completionHandler([.banner, .sound, .list])
     }
 
     func setEnabled(_ on: Bool) async {
@@ -78,7 +90,45 @@ final class QuotaAlerter: ObservableObject {
         content.body = body
         content.sound = .default
         let request = UNNotificationRequest(identifier: identifier, content: content, trigger: nil)
-        Task { try? await center.add(request) }
+        Task { @MainActor in
+            do {
+                try await center.add(request)
+                issue = nil
+            } catch {
+                issue = "Notification failed: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    /// Machine-readable authorization/delivery report for `--notification-diagnose`.
+    func diagnose() async -> String {
+        let settings = await center.notificationSettings()
+        var lines: [String] = []
+        lines.append("bundle=\(Bundle.main.bundleIdentifier ?? "?")")
+        lines.append("path=\(Bundle.main.bundlePath)")
+        lines.append("authorization=\(settings.authorizationStatus.rawValue)")
+        lines.append("alertSetting=\(settings.alertSetting.rawValue)")
+        lines.append("notificationCenter=\(settings.notificationCenterSetting.rawValue)")
+        lines.append("lockScreen=\(settings.lockScreenSetting.rawValue)")
+        lines.append("sound=\(settings.soundSetting.rawValue)")
+        lines.append("preferenceEnabled=\(enabled)")
+
+        let content = UNMutableNotificationContent()
+        content.title = "QuotaBar"
+        content.body = "Diagnostic notification."
+        content.sound = .default
+        let request = UNNotificationRequest(
+            identifier: "quotabar.diagnose.\(UUID().uuidString)",
+            content: content,
+            trigger: nil
+        )
+        do {
+            try await center.add(request)
+            lines.append("add=ok")
+        } catch {
+            lines.append("add=error \(error)")
+        }
+        return lines.joined(separator: "\n")
     }
 
     private func loadState() -> AlertState {
