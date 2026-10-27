@@ -10,11 +10,13 @@ import Foundation
 public enum ProviderID: String, CaseIterable, Sendable {
     case go = "opencode-go"
     case codex = "codex"
+    case commandCode = "commandcode"
 
     public var displayName: String {
         switch self {
         case .go: return "OpenCode Go"
         case .codex: return "Codex"
+        case .commandCode: return "Command Code"
         }
     }
 
@@ -22,6 +24,7 @@ public enum ProviderID: String, CaseIterable, Sendable {
         switch self {
         case .go: return "Go"
         case .codex: return "Cx"
+        case .commandCode: return "CC"
         }
     }
 }

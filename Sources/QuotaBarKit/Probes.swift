@@ -124,6 +124,76 @@ public struct QuotaProbes {
         }
     }
 
+    // MARK: Command Code
+
+    public func commandCode(now: Date = Date()) async -> ProbeResult {
+        guard let key = CommandCode.discoverKey() else {
+            return .failed(.noCredentials, "No Command Code API key found.")
+        }
+        async let creditsResponse = fetchCommandCode(path: "/alpha/billing/credits", key: key)
+        async let subscriptionResponse = fetchCommandCode(path: "/alpha/billing/subscriptions", key: key)
+        let (credits, subscription) = await (creditsResponse, subscriptionResponse)
+
+        let data: Data
+        switch credits {
+        case let .success((body, status)) where status == 200:
+            data = body
+        case let .success((_, status)):
+            switch status {
+            case 401: return .failed(.authFailed, "Command Code key rejected (401).")
+            case 403: return .failed(.entitlementMissing, "Command Code rejected the key (403).")
+            case 429: return .failed(.rateLimited, "Command Code is rate limiting (429).")
+            case 500...599: return .failed(.providerDown, "api.commandcode.ai is having issues (\(status)).")
+            default: return .failed(.badResponse, "Unexpected response (HTTP \(status)).")
+            }
+        case .failure:
+            return .failed(.offline, "Can't reach api.commandcode.ai.")
+        }
+
+        let report: CommandCodeCredits
+        do {
+            report = try CommandCode.decodeCredits(data)
+        } catch {
+            return .failed(.badResponse, "Unreadable response from api.commandcode.ai.")
+        }
+
+        var sub: CommandCodeSubscription?
+        if case let .success((body, status)) = subscription, status == 200 {
+            sub = try? CommandCode.decodeSubscription(body)
+        }
+
+        return .ok(ProviderSnapshot(
+            provider: .commandCode,
+            windows: CommandCode.windows(report, subscription: sub),
+            plan: CommandCode.planName(for: sub?.planId),
+            accountRef: accountRef(sub?.userId),
+            origin: .network,
+            source: "api.commandcode.ai",
+            observedAt: now,
+            facts: CommandCode.facts(report, subscription: sub, now: now)
+        ))
+    }
+
+    private func fetchCommandCode(path: String, key: String) async -> Result<(Data, Int), Error> {
+        guard let url = URL(string: CommandCode.baseURL + path) else {
+            return .failure(URLError(.badURL))
+        }
+        var req = URLRequest(url: url)
+        req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+        req.setValue(CommandCode.userAgent, forHTTPHeaderField: "User-Agent")
+        req.timeoutInterval = 15
+        do {
+            let (data, response) = try await session.data(for: req)
+            guard let http = response as? HTTPURLResponse else {
+                return .failure(URLError(.badServerResponse))
+            }
+            return .success((data, http.statusCode))
+        } catch {
+            return .failure(error)
+        }
+    }
+
     // MARK: Codex
 
     public static func codexRequest(token: String, accountId: String?) -> URLRequest {

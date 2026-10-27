@@ -9,7 +9,7 @@ import QuotaBarKit
 // Popover: current windows, 24h trend, provenance and freshness.
 // History: a real window with range charts over the local observation store.
 
-private let appVersion = "0.4.1"
+private let appVersion = "0.4.2"
 
 @MainActor
 enum AppEnvironment {
@@ -110,14 +110,9 @@ struct PopoverView: View {
     @State private var confirmRemoveKey = false
     @State private var confirmClearHistory = false
 
-    private var goTrend: [SamplePoint] {
-        guard let windowID = model.snapshots[.go]?.limiting?.id else { return [] }
-        return model.trend(provider: .go, windowID: windowID)
-    }
-
-    private var codexTrend: [SamplePoint] {
-        guard let windowID = model.snapshots[.codex]?.limiting?.id else { return [] }
-        return model.trend(provider: .codex, windowID: windowID)
+    private func trend(for provider: ProviderID) -> [SamplePoint] {
+        guard let windowID = model.snapshots[provider]?.limiting?.id else { return [] }
+        return model.trend(provider: provider, windowID: windowID)
     }
 
     var body: some View {
@@ -151,22 +146,16 @@ struct PopoverView: View {
 
     private var content: some View {
         VStack(alignment: .leading, spacing: Layout.cardSpacing) {
-            ProviderCard(
-                provider: .go,
-                snapshot: model.snapshots[.go],
-                health: model.health[.go],
-                trend: goTrend,
-                freshness: model.staleness(for: .go),
-                onEnterKey: { showKeyEntry = true }
-            )
-            ProviderCard(
-                provider: .codex,
-                snapshot: model.snapshots[.codex],
-                health: model.health[.codex],
-                trend: codexTrend,
-                freshness: model.staleness(for: .codex),
-                onEnterKey: nil
-            )
+            ForEach(ProviderID.allCases, id: \.self) { provider in
+                ProviderCard(
+                    provider: provider,
+                    snapshot: model.snapshots[provider],
+                    health: model.health[provider],
+                    trend: trend(for: provider),
+                    freshness: model.staleness(for: provider),
+                    onEnterKey: provider == .go ? { showKeyEntry = true } : nil
+                )
+            }
             if showKeyEntry { keyEntry }
             Divider()
             footer
@@ -321,6 +310,7 @@ struct PopoverView: View {
             Text("Go: opencode.ai/zen/go/v1/usage").font(.caption).monospaced()
             Text("Codex: chatgpt.com/backend-api/wham/usage").font(.caption).monospaced()
             Text("Codex fallback: ~/.codex/sessions").font(.caption).monospaced()
+            Text("Command Code: api.commandcode.ai/alpha/billing").font(.caption).monospaced()
             Text("Go key source: \(model.goKeySourceText)").font(.caption).foregroundStyle(.secondary)
             Text("History: 90 days of observations in ~/Library/Application Support/QuotaBar. No prompts, tokens or account identities are stored, and nothing leaves this Mac.")
                 .font(.caption).foregroundStyle(.secondary)

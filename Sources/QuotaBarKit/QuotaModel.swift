@@ -104,10 +104,17 @@ public final class QuotaModel: ObservableObject {
 
         async let goResult = probes.go()
         async let codexResult = probes.codex()
-        let (go, codex) = await (goResult, codexResult)
+        async let commandCodeResult = probes.commandCode()
 
-        apply(go, provider: .go)
-        apply(codex, provider: .codex)
+        // Apply the providers that cannot block on a system prompt first, so a
+        // Keychain dialog can never hide fresh Codex/Command Code data.
+        apply(await codexResult, provider: .codex)
+        apply(await commandCodeResult, provider: .commandCode)
+        lastRefresh = Date()
+        pruneIfNeeded()
+        invalidateHistory()
+
+        apply(await goResult, provider: .go)
         lastRefresh = Date()
         pruneIfNeeded()
         invalidateHistory()
@@ -288,8 +295,10 @@ public final class QuotaModel: ObservableObject {
         let state = await probes.fetchGo(key: key, source: "entered key")
         switch state {
         case .ready:
-            guard saveKeychainKey(account: quotaBarGoAccount, value: key) else {
-                return "Key is valid but Keychain save failed."
+            let savedFile = saveGoKeyFile(key)
+            let savedKeychain = saveKeychainKey(account: quotaBarGoAccount, value: key)
+            guard savedFile || savedKeychain else {
+                return "Key is valid but could not be saved."
             }
             await refresh()
             return nil
@@ -312,6 +321,7 @@ public final class QuotaModel: ObservableObject {
 
     public func forgetGoKey() {
         deleteKeychainKey(account: quotaBarGoAccount)
+        deleteGoKeyFile()
         health[.go] = ProviderHealth(state: .noCredentials, message: "Saved key removed.", attemptedAt: Date())
         snapshots[.go] = nil
         Task { await refresh() }

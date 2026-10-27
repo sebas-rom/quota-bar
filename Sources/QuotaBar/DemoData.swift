@@ -110,8 +110,26 @@ enum DemoData {
             facts: ["2 reset credits"]
         )
 
+        let commandCodeSnapshot = ProviderSnapshot(
+            provider: .commandCode,
+            windows: [
+                QuotaWindow(id: "commandcode.5h", kind: .rolling, label: "5-hour",
+                            percent: 10.9, resetsAt: now.addingTimeInterval(2 * 3_600), windowMinutes: 300, isLimited: false),
+                QuotaWindow(id: "commandcode.weekly", kind: .weekly, label: "Weekly",
+                            percent: 4.4, resetsAt: now.addingTimeInterval(6 * 86_400), windowMinutes: 10_080, isLimited: false),
+                QuotaWindow(id: "commandcode.monthly", kind: .monthly, label: "Monthly",
+                            percent: 2.2, resetsAt: now.addingTimeInterval(31 * 86_400), windowMinutes: 43_200, isLimited: false),
+            ],
+            plan: "GOAT",
+            origin: .demo,
+            source: "api.commandcode.ai",
+            observedAt: now.addingTimeInterval(-30),
+            facts: ["68.6 of 70 credits left", "Renews Nov 27"]
+        )
+
         model.ingestDemo(goSnapshot)
         model.ingestDemo(codexSnapshot)
+        model.ingestDemo(commandCodeSnapshot)
         model.invalidateHistory()
     }
 }

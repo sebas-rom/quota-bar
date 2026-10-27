@@ -52,6 +52,39 @@ public func deleteKeychainKey(service: String = quotaBarService, account: String
     SecItemDelete(q as CFDictionary)
 }
 
+/// Cached Go key file. Preferred over Keychain because an ad-hoc signed app
+/// gets a new code identity on every build/update, which re-triggers the
+/// Keychain access prompt. 0600, user-only, same place the app already
+/// documents as an override.
+public func goKeyConfigURL() -> URL {
+    homeDir().appendingPathComponent(".config/quota-bar/opencode-go.json")
+}
+
+@discardableResult
+public func saveGoKeyFile(_ key: String) -> Bool {
+    let url = goKeyConfigURL()
+    let dir = url.deletingLastPathComponent()
+    try? FileManager.default.createDirectory(
+        at: dir,
+        withIntermediateDirectories: true,
+        attributes: [.posixPermissions: 0o700]
+    )
+    guard let data = try? JSONSerialization.data(withJSONObject: ["apiKey": key], options: [.prettyPrinted, .sortedKeys]) else {
+        return false
+    }
+    do {
+        try data.write(to: url, options: [.atomic])
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        return true
+    } catch {
+        return false
+    }
+}
+
+public func deleteGoKeyFile() {
+    try? FileManager.default.removeItem(at: goKeyConfigURL())
+}
+
 public struct KeyCandidate {
     public let source: String
     public let key: String
@@ -65,11 +98,17 @@ public func goKeyCandidates() -> [KeyCandidate] {
         guard let k = key?.trimmingCharacters(in: .whitespacesAndNewlines), !k.isEmpty else { return }
         if !out.contains(where: { $0.key == k }) { out.append(KeyCandidate(source: source, key: k)) }
     }
-    add("Keychain", loadKeychainKey(account: quotaBarGoAccount))
-    let override = homeDir().appendingPathComponent(".config/quota-bar/opencode-go.json")
-    if let data = try? Data(contentsOf: override),
+    // 1. Cached file first: no Keychain prompt, survives ad-hoc rebuilds.
+    if let data = try? Data(contentsOf: goKeyConfigURL()),
        let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
         add("config file", obj["apiKey"] as? String)
+    }
+    // 2. Keychain. Migrate to the file once so the next update stays prompt-free.
+    let keychainKey = loadKeychainKey(account: quotaBarGoAccount)
+    add("Keychain", keychainKey)
+    if let keychainKey,
+       !FileManager.default.fileExists(atPath: goKeyConfigURL().path) {
+        _ = saveGoKeyFile(keychainKey)
     }
     let env = ProcessInfo.processInfo.environment
     add("env var", env["OPENCODE_GO_API_KEY"])

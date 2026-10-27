@@ -7,8 +7,8 @@ The maintainer (@sebas-rom) reviews and merges; nothing lands without approval.
 
 QuotaBar stays deliberately small:
 
-- **Two providers only**: opencode-go + Codex. No arbitrary provider-configuration
-  engine. A new provider is a typed adapter plus the shared display contract —
+- **Three shipped providers**: opencode-go, Codex, Command Code. No arbitrary
+  provider-configuration engine. A new provider is a typed adapter plus the shared display contract —
   the cards and charts must not learn provider names.
 - **Local-first**: read credentials already on disk; never scrape browsers, never
   touch the Keychain except the key the user explicitly enters in-app.
