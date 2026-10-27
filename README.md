@@ -16,6 +16,24 @@ freshness of what you are looking at.
 
 ![Popover](docs/evidence/popover-light.png)
 
+## What's new in 0.9 — agent status
+
+`qbar --status-json` gives local agents a read-only, timestamped snapshot of every
+provider/window:
+
+```sh
+/Applications/QuotaBar.app/Contents/MacOS/qbar --status-json
+```
+
+It reads the latest persisted observation per window and reports `percentUsed`,
+`resetsAt`, `observedAt`, `origin`, `ageSeconds` and `stale`. No GUI start, no
+network probe, no credentials. Schema and exit codes:
+[docs/STATUS.md](docs/STATUS.md).
+
+**Notarization is deliberately deferred** (no Apple Developer membership for
+now). Gatekeeper’s right-click first launch and the panel-based alerts are the
+accepted trade-off: [docs/DECISIONS.md](docs/DECISIONS.md).
+
 ## What's new in 0.8.1 — compact cards
 
 Three providers no longer need a tall popover. Each card shows the most limiting
@@ -121,11 +139,12 @@ curl -fLO https://github.com/sebas-rom/quota-bar/releases/latest/download/checks
 grep '  QuotaBar.zip$' checksums.txt | shasum -a 256 -c -
 ```
 
-The build is **not notarized yet**, so a normal Mac shows Gatekeeper’s
-“unidentified developer” prompt on first launch: right-click the app → **Open**,
-or use System Settings → Privacy & Security → **Open Anyway**. Do not strip
-quarantine with `xattr`; that defeats the protection and is not the supported
-path. Full details and agent instructions: [INSTALL.md](INSTALL.md).
+Notarization is **deliberately deferred** for now, so a normal Mac shows
+Gatekeeper’s “unidentified developer” prompt on first launch: right-click the app
+→ **Open**, or use System Settings → Privacy & Security → **Open Anyway**. Do not
+strip quarantine with `xattr`; that defeats the protection and is not the
+supported path. Rationale: [docs/DECISIONS.md](docs/DECISIONS.md). Full details
+and agent instructions: [INSTALL.md](INSTALL.md).
 
 No setup is needed if your keys are already on disk (see below). Toggle
 **Launch at login** in the ⋯ menu.

@@ -9,7 +9,7 @@ import QuotaBarKit
 // Popover: current windows, 24h trend, provenance and freshness.
 // History: a real window with range charts over the local observation store.
 
-private let appVersion = "0.8.1"
+private let appVersion = "0.9.0"
 
 @MainActor
 enum AppEnvironment {
@@ -29,6 +29,9 @@ enum AppEnvironment {
 enum QuotaBarMain {
     static func main() {
         let args = ProcessInfo.processInfo.arguments
+        if args.contains("--status-json") {
+            StatusCLI.run()
+        }
         if args.contains("--render-evidence") {
             MainActor.assumeIsolated {
                 _ = EvidenceRenderer.handleCommandLineIfRequested()

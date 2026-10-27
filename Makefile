@@ -11,6 +11,7 @@ app: build
 	rm -rf $(BUNDLE)
 	mkdir -p $(BUNDLE)/Contents/MacOS $(BUNDLE)/Contents/Frameworks $(BUNDLE)/Contents/Resources
 	cp $(BIN) $(BUNDLE)/Contents/MacOS/$(APP)
+	ln -sf $(APP) $(BUNDLE)/Contents/MacOS/qbar
 	cp Info.plist $(BUNDLE)/Contents/Info.plist
 	cp Resources/QuotaBar.icns $(BUNDLE)/Contents/Resources/QuotaBar.icns
 	/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $$(date -u +%Y%m%d%H%M%S)" $(BUNDLE)/Contents/Info.plist
