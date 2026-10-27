@@ -294,3 +294,41 @@ final class HistoryClearTests: XCTestCase {
                                                     since: now.addingTimeInterval(-30)))
     }
 }
+
+final class MultiAccountHistoryTests: XCTestCase {
+    private func live(_ percent: Double, account: String, at date: Date) -> ProviderSnapshot {
+        ProviderSnapshot(
+            provider: .codex,
+            windows: [QuotaWindow(id: "codex.primary", kind: .primary, label: "5-hour",
+                                  percent: percent, resetsAt: nil, windowMinutes: 300, isLimited: false)],
+            accountRef: account, origin: .network, source: "test", observedAt: date
+        )
+    }
+
+    private func device(_ percent: Double, at date: Date) -> ProviderSnapshot {
+        ProviderSnapshot(
+            provider: .codex,
+            windows: [QuotaWindow(id: "codex.primary", kind: .primary, label: "5-hour",
+                                  percent: percent, resetsAt: nil, windowMinutes: 300, isLimited: false)],
+            accountRef: nil, origin: .localLog, source: "test", observedAt: date
+        )
+    }
+
+    func testScopedHistoryNeverLeaksAnotherAccount() {
+        let store = try? TelemetryStore.inMemory()
+        guard let store else { return XCTFail("store") }
+        defer { store.close() }
+        let now = Date()
+        _ = store.insert(live(10, account: "acctA", at: now.addingTimeInterval(-300)))
+        _ = store.insert(live(90, account: "acctB", at: now.addingTimeInterval(-240)))
+        _ = store.insert(device(50, at: now.addingTimeInterval(-180)))
+
+        let a = store.series(provider: .codex, windowID: "codex.primary",
+                             since: now.addingTimeInterval(-3_600), accountRef: "acctA")
+        XCTAssertEqual(a.map(\.percent), [10, 50], "A's live row + device-level row, never B")
+        let b = store.series(provider: .codex, windowID: "codex.primary",
+                             since: now.addingTimeInterval(-3_600), accountRef: "acctB")
+        XCTAssertEqual(b.map(\.percent), [90, 50])
+        XCTAssertEqual(store.count(), 3)
+    }
+}
