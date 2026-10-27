@@ -37,7 +37,7 @@ final class ForecastTests: XCTestCase {
         XCTAssertEqual(resetMinutes, 180, accuracy: 1)
         XCTAssertEqual(
             ForecastCopy.line(for: state),
-            "At recent pace: ~50m to 95% · resets in 3h"
+            "At recent pace · 95% in ~50m"
         )
     }
 
@@ -49,7 +49,7 @@ final class ForecastTests: XCTestCase {
             return XCTFail("expected below95, got \(state)")
         }
         XCTAssertEqual(resetMinutes, 60, accuracy: 1)
-        XCTAssertEqual(ForecastCopy.line(for: state), "At recent pace: below 95% until reset (~1h)")
+        XCTAssertEqual(ForecastCopy.line(for: state), "At recent pace · below 95% by reset")
     }
 
     func testSlowRateStillSaysBelowUntilReset() {
@@ -145,5 +145,42 @@ final class ForecastTests: XCTestCase {
         XCTAssertEqual(ForecastCopy.duration(60), "1h")
         XCTAssertEqual(ForecastCopy.duration(125), "2h 5m")
         XCTAssertEqual(ForecastCopy.duration(60 * 30), "1d")
+    }
+}
+
+final class ForecastProjectionTests: XCTestCase {
+    private let now = Date(timeIntervalSince1970: 1_793_100_000)
+
+    private func series(from: Double, to: Double, reset: Date) -> [ForecastSample] {
+        (0..<13).map { index in
+            let at = now.addingTimeInterval(Double(index - 12) * 300)
+            let progress = Double(index) / 12
+            return ForecastSample(at: at, percent: from + (to - from) * progress,
+                                  resetsAt: reset, origin: .network)
+        }
+    }
+
+    func testProjectionIsCappedAtHorizonAndLimit() {
+        let reset = now.addingTimeInterval(180 * 60)
+        let samples = series(from: 40, to: 70, reset: reset)
+        let projection = ForecastEngine.projection(
+            samples: samples, now: now, currentPercent: 70,
+            resetAt: reset, windowMinutes: 300
+        )
+        let p = projection
+        XCTAssertNotNil(p)
+        XCTAssertEqual(p?.from, samples.last?.at)
+        XCTAssertEqual(p?.fromPercent, 70)
+        XCTAssertLessThanOrEqual(p?.toPercent ?? 999, 100)
+        XCTAssertLessThanOrEqual(p?.to ?? .distantFuture, now.addingTimeInterval(2 * 60 * 60 + 1))
+    }
+
+    func testNoProjectionWhenIneligible() {
+        let reset = now.addingTimeInterval(180 * 60)
+        let flat = series(from: 60, to: 60.2, reset: reset)
+        XCTAssertNil(ForecastEngine.projection(
+            samples: flat, now: now, currentPercent: 60.2,
+            resetAt: reset, windowMinutes: 300
+        ))
     }
 }

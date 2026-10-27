@@ -5,30 +5,15 @@ import QuotaBarKit
 
 // MARK: - History window
 //
-// Depth lives here: range charts per window, provenance per provider, and an
-// honest empty state. The popover stays a glance.
-
-enum HistoryRange: String, CaseIterable, Identifiable {
-    case day, week
-
-    var id: String { rawValue }
-    var hours: Int { self == .day ? 24 : 168 }
-    var label: String { self == .day ? "24 hours" : "7 days" }
-    var axisLabel: String { self == .day ? "24h" : "7d" }
-
-    var xAxisFormat: Date.FormatStyle {
-        self == .day
-            ? .dateTime.hour()
-            : .dateTime.weekday(.abbreviated)
-    }
-}
+// Cycle-first: every chart runs from the start of a quota window to its reset,
+// not over an arbitrary 24h/7d range. Forecasts are drawn only for the current
+// 5-hour window when the engine says the evidence is sufficient.
 
 struct HistoryView: View {
     @ObservedObject var model: QuotaModel
-    /// Evidence snapshots render without ScrollView/Picker, which the offscreen
+    /// Evidence snapshots render without ScrollView, which the offscreen
     /// renderer cannot lay out. The shipped window always uses the live path.
     var isSnapshot = false
-    @State private var range: HistoryRange = .day
     @State private var confirmClear = false
 
     var body: some View {
@@ -60,9 +45,18 @@ struct HistoryView: View {
     private var historyContent: some View {
         VStack(alignment: .leading, spacing: 18) {
             ForEach(ProviderID.allCases, id: \.self) { provider in
-                ProviderHistorySection(model: model, provider: provider, range: range)
+                ProviderHistorySection(model: model, provider: provider, isSnapshot: isSnapshot)
             }
-            Text("Percent used per window on a fixed 0–100 scale. Sampled every 5 minutes, kept for 90 days, never uploaded.")
+            HStack(spacing: 14) {
+                legendItem("Usage", style: .solid)
+                legendItem("Forecast", style: .dashed)
+                legendItem("Limit", style: .limit)
+                Spacer()
+            }
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+
+            Text("Each chart covers one quota cycle, from window start to reset. Forecasts are drawn only for the current 5-hour window when recent observations are sufficient.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -75,26 +69,15 @@ struct HistoryView: View {
         HStack(alignment: .firstTextBaseline) {
             VStack(alignment: .leading, spacing: 2) {
                 Text("Quota History").font(.title2.weight(.semibold))
-                Text("Where both stacks have been, not just where they are.")
+                Text("How this cycle is being spent.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Spacer()
-            if isSnapshot {
-                Text(range.label)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 10).padding(.vertical, 4)
-                    .background(.quaternary.opacity(0.5), in: Capsule())
-            } else {
-                Picker("Range", selection: $range) {
-                    ForEach(HistoryRange.allCases) { range in
-                        Text(range.label).tag(range)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(width: 190)
-            }
+            Text("Cycle view")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 10).padding(.vertical, 4)
+                .background(.quaternary.opacity(0.5), in: Capsule())
         }
         .padding(16)
     }
@@ -113,12 +96,32 @@ struct HistoryView: View {
         }
         .padding(12)
     }
+
+    @ViewBuilder
+    private func legendItem(_ text: String, style: LegendStyle) -> some View {
+        HStack(spacing: 4) {
+            switch style {
+            case .solid:
+                Capsule().fill(Color.secondary).frame(width: 14, height: 2)
+            case .dashed:
+                HStack(spacing: 2) {
+                    Capsule().fill(Color.secondary).frame(width: 4, height: 2)
+                    Capsule().fill(Color.secondary).frame(width: 4, height: 2)
+                }
+            case .limit:
+                Rectangle().fill(Color.secondary.opacity(0.6)).frame(width: 14, height: 1)
+            }
+            Text(text)
+        }
+    }
+
+    private enum LegendStyle { case solid, dashed, limit }
 }
 
 struct ProviderHistorySection: View {
     @ObservedObject var model: QuotaModel
     let provider: ProviderID
-    let range: HistoryRange
+    var isSnapshot = false
 
     private var snapshot: ProviderSnapshot? { model.snapshots[provider] }
     private var health: ProviderHealth? { model.health[provider] }
@@ -143,13 +146,6 @@ struct ProviderHistorySection: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
-            if showsDeviceLevelNote {
-                Label("Local session-log history is device-level (not account-tagged).",
-                      systemImage: "externaldrive")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .labelStyle(.titleAndIcon)
-            }
 
             if let snapshot, !snapshot.windows.isEmpty {
                 windowRows(snapshot.windows)
@@ -169,18 +165,11 @@ struct ProviderHistorySection: View {
             ForEach(rows.indices, id: \.self) { index in
                 HStack(alignment: .top, spacing: 12) {
                     ForEach(rows[index]) { window in
-                        WindowChartCard(model: model, provider: provider, window: window, range: range)
+                        CycleChartCard(model: model, provider: provider, window: window, isSnapshot: isSnapshot)
                             .frame(maxWidth: .infinity)
                     }
                 }
             }
-        }
-    }
-
-    private var showsDeviceLevelNote: Bool {
-        guard provider == .codex, let snapshot else { return false }
-        return snapshot.windows.contains {
-            model.hasDeviceLevelHistory(provider: provider, windowID: $0.id, hours: range.hours)
         }
     }
 
@@ -207,174 +196,307 @@ struct ProviderHistorySection: View {
         case .noCredentials:
             return provider == .go
                 ? "Add an opencode Personal API key from the menu to start recording."
-                : "Sign in with the Codex CLI so ~/.codex/auth.json exists."
+                : "Sign in with the provider so QuotaBar can read its quota."
         case .authFailed, .entitlementMissing:
             return health?.message ?? "Credentials need attention."
         default:
-            return "The first observation is written on the next refresh. History appears once there are two samples."
+            return "The first observation is written on the next refresh."
         }
     }
 }
 
-struct WindowChartCard: View {
+struct CycleChartCard: View {
     @ObservedObject var model: QuotaModel
     let provider: ProviderID
     let window: QuotaWindow
-    let range: HistoryRange
+    var isSnapshot = false
 
-    private var points: [SamplePoint] {
-        model.trend(provider: provider, windowID: window.id, hours: range.hours)
+    @State private var cycleIndex = 0
+
+    private var cycles: [QuotaCycle] {
+        model.cycles(for: provider, window: window)
     }
 
-    private var color: Color { dotColor(usageColorName(for: window.percent)) }
+    private var safeIndex: Int {
+        min(max(cycleIndex, 0), max(0, cycles.count - 1))
+    }
+
+    private var cycle: QuotaCycle? {
+        cycles.indices.contains(safeIndex) ? cycles[safeIndex] : nil
+    }
+
+    private var points: [SamplePoint] {
+        guard let cycle else { return [] }
+        return model.cycleSamples(for: cycle, provider: provider, window: window)
+    }
+
+    private var displayPercent: Double {
+        if let cycle, cycle.isCurrent,
+           let live = model.snapshots[provider]?.window(id: window.id) {
+            return live.percent
+        }
+        return points.last?.percent ?? window.percent
+    }
+
+    private var isCurrent: Bool { cycle?.isCurrent ?? true }
+
+    private var statusText: String? {
+        if displayPercent >= 100 || (isCurrent && window.isLimited) { return "Limit reached" }
+        if displayPercent >= 90 { return "Near limit" }
+        return nil
+    }
+
+    private var isForecastable: Bool {
+        window.windowMinutes == 300 && (window.kind == .rolling || window.kind == .primary)
+    }
+
+    private var forecastState: ForecastState? {
+        guard isForecastable, let cycle, cycle.isCurrent else { return nil }
+        return model.cycleForecast(for: cycle, provider: provider, window: window)
+    }
+
+    private var projection: ForecastProjection? {
+        guard isForecastable, let cycle, cycle.isCurrent else { return nil }
+        return model.cycleProjection(for: cycle, provider: provider, window: window)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(window.label).font(.subheadline.weight(.medium))
-                if window.isLimited {
-                    Text("limit reached").font(.caption2).foregroundStyle(.red)
-                }
-                Spacer()
-                Text("\(Int(window.percent.rounded()))%")
-                    .font(.title3.weight(.semibold)).monospacedDigit()
+            header
+            if let cycle {
+                Text(cycleSubtitle(cycle))
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+            if let statusText {
+                Text(statusText)
+                    .font(.caption2).fontWeight(.medium)
+                    .foregroundStyle(displayPercent >= 100 ? .red : .orange)
             }
 
-            HStack(spacing: 8) {
-                if let reset = resetText(until: window.resetsAt) {
-                    Text(reset).font(.caption).foregroundStyle(.secondary)
-                }
-                if let delta = deltaPoints(points) {
-                    Text(deltaText(delta)).font(.caption).foregroundStyle(.secondary)
-                }
-                Spacer(minLength: 0)
-            }
+            chart
+                .frame(height: 132)
+                .padding(.top, 2)
 
-            if points.count >= 2 {
-                chart
-            } else {
-                placeholder
-            }
+            footerNotes
         }
         .padding(10)
         .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(provider.displayName), \(window.label) quota, \(range.label) history")
-        .accessibilityValue(accessibilityValue)
+        .accessibilityLabel(accessibilitySummary)
     }
 
+    private var header: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Text(window.label).font(.subheadline.weight(.medium))
+            if cycles.count > 1 {
+                if isSnapshot {
+                    Image(systemName: "chevron.left").foregroundStyle(.secondary)
+                    Image(systemName: "chevron.right").foregroundStyle(.secondary)
+                } else {
+                    Button {
+                        cycleIndex = min(cycleIndex + 1, cycles.count - 1)
+                    } label: {
+                        Image(systemName: "chevron.left")
+                    }
+                    .buttonStyle(.borderless)
+                    .controlSize(.mini)
+                    .disabled(safeIndex >= cycles.count - 1)
+                    .help("Previous cycle")
+
+                    Button {
+                        cycleIndex = max(cycleIndex - 1, 0)
+                    } label: {
+                        Image(systemName: "chevron.right")
+                    }
+                    .buttonStyle(.borderless)
+                    .controlSize(.mini)
+                    .disabled(safeIndex == 0)
+                    .help("Next cycle")
+                }
+            }
+            Spacer()
+            Text("\(Int(displayPercent.rounded()))%")
+                .font(.title3.weight(.semibold)).monospacedDigit()
+        }
+    }
+
+    @ViewBuilder
     private var chart: some View {
-        let now = Date()
-        return Chart {
-            ForEach(points) { point in
-                AreaMark(
-                    x: .value("Time", point.at),
-                    y: .value("Used", point.percent)
-                )
-                .foregroundStyle(LinearGradient(
-                    colors: [color.opacity(0.28), color.opacity(0.02)],
-                    startPoint: .top, endPoint: .bottom
-                ))
-                .interpolationMethod(.monotone)
+        if points.count >= 2 {
+            Chart {
+                RuleMark(y: .value("Limit", 100))
+                    .foregroundStyle(.secondary.opacity(0.55))
+                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
 
-                LineMark(
-                    x: .value("Time", point.at),
-                    y: .value("Used", point.percent)
-                )
-                .foregroundStyle(color)
-                .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
-                .interpolationMethod(.monotone)
-            }
-            if let last = points.last {
-                PointMark(
-                    x: .value("Time", last.at),
-                    y: .value("Used", last.percent)
-                )
-                .foregroundStyle(color)
-                .symbolSize(24)
-            }
-        }
-        .chartYScale(domain: 0...100)
-        .chartXScale(
-            domain: now.addingTimeInterval(-Double(range.hours) * 3_600)...now,
-            range: .plotDimension(padding: 8)
-        )
-        .chartYAxis {
-            AxisMarks(position: .leading, values: [0, 50, 100]) { _ in
-                AxisGridLine().foregroundStyle(.quaternary)
-                AxisValueLabel().font(.caption2)
-            }
-        }
-        .chartXAxis {
-            AxisMarks(values: axisDates) { _ in
-                AxisGridLine().foregroundStyle(.quaternary)
-                AxisValueLabel(format: range.xAxisFormat).font(.caption2)
-            }
-        }
-        .chartPlotStyle { plot in
-            plot.background(Color.primary.opacity(0.035))
-        }
-        .frame(height: 104)
-    }
+                ForEach(Array(segments.enumerated()), id: \.offset) { index, segment in
+                    ForEach(segment) { point in
+                        LineMark(
+                            x: .value("Time", point.at),
+                            y: .value("Used", point.percent),
+                            series: .value("Segment", index)
+                        )
+                        .foregroundStyle(color)
+                        .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+                        .interpolationMethod(.monotone)
+                    }
+                }
 
-    /// Ticks on aligned boundaries, deliberately stopping short of "now" so the
-    /// last label is never clipped by the plot edge.
-    private var axisDates: [Date] {
-        let now = Date()
-        let calendar = Calendar.current
-        let start = now.addingTimeInterval(-Double(range.hours) * 3_600)
-        var dates: [Date] = []
+                if let projection {
+                    LineMark(
+                        x: .value("Time", projection.from),
+                        y: .value("Used", projection.fromPercent),
+                        series: .value("Segment", "forecast")
+                    )
+                    .foregroundStyle(color.opacity(0.9))
+                    .lineStyle(StrokeStyle(lineWidth: 2, dash: [4, 3]))
 
-        if range == .day {
-            guard var cursor = calendar.dateInterval(of: .hour, for: start)?.start else { return [] }
-            let hour = calendar.component(.hour, from: cursor)
-            cursor = cursor.addingTimeInterval(Double((6 - hour % 6) % 6) * 3_600)
-            if cursor < start { cursor = cursor.addingTimeInterval(6 * 3_600) }
-            // Keep the last label far enough from the plot edge to render fully.
-            while cursor < now.addingTimeInterval(-2 * 3_600) {
-                dates.append(cursor)
-                cursor = cursor.addingTimeInterval(6 * 3_600)
+                    LineMark(
+                        x: .value("Time", projection.to),
+                        y: .value("Used", projection.toPercent),
+                        series: .value("Segment", "forecast")
+                    )
+                    .foregroundStyle(color.opacity(0.9))
+                    .lineStyle(StrokeStyle(lineWidth: 2, dash: [4, 3]))
+                }
+
+                if let last = points.last {
+                    PointMark(x: .value("Time", last.at), y: .value("Used", last.percent))
+                        .foregroundStyle(color)
+                        .symbolSize(28)
+                }
+            }
+            .chartYScale(domain: 0...yMax)
+            .chartXScale(domain: xDomain)
+            .chartYAxis {
+                AxisMarks(position: .leading, values: [0, 50, 100]) { _ in
+                    AxisGridLine().foregroundStyle(.quaternary)
+                    AxisValueLabel().font(.caption2)
+                }
+            }
+            .chartXAxis {
+                AxisMarks(values: tickDates) { _ in
+                    AxisGridLine().foregroundStyle(.quaternary)
+                    AxisValueLabel(format: tickFormat).font(.caption2)
+                }
+            }
+            .chartPlotStyle { plot in
+                plot.background(Color.primary.opacity(0.035))
+            }
+        } else if points.count == 1 {
+            ZStack {
+                RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.035))
+                Text("Collecting history…").font(.caption2).foregroundStyle(.tertiary)
             }
         } else {
-            guard var cursor = calendar.dateInterval(of: .day, for: start)?.start else { return [] }
-            cursor = cursor.addingTimeInterval(86_400)
-            if cursor < start { cursor = cursor.addingTimeInterval(86_400) }
-            while cursor < now.addingTimeInterval(-12 * 3_600) {
-                dates.append(cursor)
-                cursor = cursor.addingTimeInterval(86_400)
+            ZStack {
+                RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.035))
+                VStack(spacing: 3) {
+                    Image(systemName: "clock.arrow.circlepath").font(.caption)
+                    Text("No samples in this cycle").font(.caption2)
+                }
+                .foregroundStyle(.tertiary)
             }
         }
-        return dates
     }
 
-    private var placeholder: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 6)
-                .fill(Color.primary.opacity(0.035))
-            VStack(spacing: 3) {
-                Image(systemName: "chart.line.uptrend.xyaxis")
-                    .font(.caption)
-                Text("Collecting samples…")
-                    .font(.caption2)
+    @ViewBuilder
+    private var footerNotes: some View {
+        if let cycle {
+            if let first = points.first, first.at.timeIntervalSince(cycle.start) > 3600 {
+                Text("History starts \(first.at.formatted(.dateTime.month(.abbreviated).day()))")
+                    .font(.caption2).foregroundStyle(.tertiary)
             }
-            .foregroundStyle(.tertiary)
+            if let line = forecastState.flatMap({ ForecastCopy.line(for: $0) }) {
+                Text(line).font(.caption2).foregroundStyle(.secondary)
+            }
         }
-        .frame(height: 104)
     }
 
-    private var accessibilityValue: String {
-        var bits = ["\(Int(window.percent.rounded())) percent used"]
-        if let reset = resetText(until: window.resetsAt) { bits.append(reset) }
-        if let delta = deltaPoints(points) {
-            bits.append("\(delta >= 0 ? "up" : "down") \(Int(abs(delta).rounded())) points over \(range.label)")
+    private var color: Color {
+        dotColor(usageColorName(for: displayPercent))
+    }
+
+    private var xDomain: ClosedRange<Date> {
+        guard let cycle else { return Date()...Date().addingTimeInterval(1) }
+        return cycle.start...cycle.end
+    }
+
+    private var yMax: Double {
+        let maxValue = max(100, points.map(\.percent).max() ?? 0, projection?.toPercent ?? 0)
+        if maxValue <= 100 { return 110 }
+        if maxValue <= 110 { return 125 }
+        if maxValue <= 125 { return 150 }
+        return (maxValue / 25).rounded(.up) * 25
+    }
+
+    private var segments: [[SamplePoint]] {
+        var out: [[SamplePoint]] = []
+        var current: [SamplePoint] = []
+        for point in points.sorted(by: { $0.at < $1.at }) {
+            if let last = current.last, point.at.timeIntervalSince(last.at) > 15 * 60 {
+                if !current.isEmpty { out.append(current) }
+                current = []
+            }
+            current.append(point)
         }
-        if points.count < 2 { bits.append("history still collecting") }
+        if !current.isEmpty { out.append(current) }
+        return out
+    }
+
+    private var tickDates: [Date] {
+        guard let cycle else { return [] }
+        let span = cycle.end.timeIntervalSince(cycle.start)
+        let fractions: [Double] = span <= 6 * 3600
+            ? [0.0, 0.5, 1.0]
+            : [0.0, 1.0 / 3.0, 2.0 / 3.0, 1.0]
+        return fractions.map { cycle.start.addingTimeInterval(span * $0) }
+    }
+
+    private var tickFormat: Date.FormatStyle {
+        guard let cycle else { return .dateTime.month(.abbreviated).day() }
+        let span = cycle.end.timeIntervalSince(cycle.start)
+        if span <= 6 * 3600 { return .dateTime.hour().minute() }
+        return .dateTime.month(.abbreviated).day()
+    }
+
+    private func cycleSubtitle(_ cycle: QuotaCycle) -> String {
+        let span = cycle.end.timeIntervalSince(cycle.start)
+        let prefix: String
+        switch cycle.provenance {
+        case .exact: prefix = "Billing period"
+        case .estimated: prefix = "Quota cycle · approx."
+        case .derived: prefix = "Quota cycle"
+        }
+        let dates: String
+        if span <= 6 * 3600 {
+            let start = cycle.start.formatted(.dateTime.hour().minute())
+            let end = cycle.end.formatted(.dateTime.hour().minute())
+            dates = "\(start)–\(end)"
+        } else {
+            let start = cycle.start.formatted(.dateTime.month(.abbreviated).day())
+            let end = cycle.end.formatted(.dateTime.month(.abbreviated).day())
+            dates = "\(start)–\(end)"
+        }
+        var text = "\(prefix) · \(dates)"
+        if cycle.isCurrent {
+            if let reset = resetText(until: cycle.end) {
+                text += " · \(reset.prefix(1).uppercased() + reset.dropFirst())"
+            }
+        } else {
+            text += " · Ended"
+        }
+        return text
+    }
+
+    private var accessibilitySummary: String {
+        var bits = ["\(provider.displayName), \(window.label) quota"]
+        bits.append("\(Int(displayPercent.rounded())) percent used")
+        if let cycle {
+            bits.append(cycleSubtitle(cycle))
+        }
+        if let statusText { bits.append(statusText) }
+        if let line = forecastState.flatMap({ ForecastCopy.line(for: $0) }) { bits.append(line) }
+        if points.count < 2 { bits.append("history collecting") }
         return bits.joined(separator: ", ")
-    }
-
-    private func deltaText(_ delta: Double) -> String {
-        let rounded = Int(delta.rounded())
-        if rounded == 0 { return "flat · \(range.axisLabel)" }
-        return "\(rounded > 0 ? "+" : "−")\(abs(rounded)) pts · \(range.axisLabel)"
     }
 }

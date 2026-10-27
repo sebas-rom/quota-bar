@@ -13,8 +13,8 @@ Command:
 |---|---|---|
 | `popover-light.png` | `PopoverView` (menu-bar popover content) | 320 × 559 |
 | `popover-dark.png` | same, dark appearance | 320 × 559 |
-| `history-light.png` | `HistoryView` (History window content) | 620 × 767 |
-| `history-dark.png` | same, dark appearance | 620 × 767 |
+| `history-light.png` | `HistoryView` (cycle-first History content) | 620 × 1343 |
+| `history-dark.png` | same, dark appearance | 620 × 1343 |
 | `menubar-icon.png` | menu-bar template icon (6×) | 108 × 108 |
 | `app-icon.png` | app icon master | 1024 × 1024 |
 
@@ -64,6 +64,13 @@ the narrowest supported presentation; the History window has a 520 pt minimum.
 - Ad-hoc builds deliver alerts through a floating panel instead of Notification
   Center; the popover now paints an explicit system background so light mode
   cannot inherit a dark wallpaper-tinted material.
+
+## Cycle-first history (v0.7)
+
+Charts run from the cycle start to the reset, isolate observations by reset
+boundary, draw a dashed 100% limit and a dashed forecast for the current 5-hour
+window, and label partial coverage. Previous-cycle navigation is only enabled
+when that reset has observations.
 
 ## Forecast (v0.6)
 

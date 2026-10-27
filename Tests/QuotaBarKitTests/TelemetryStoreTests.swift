@@ -336,3 +336,52 @@ final class MultiAccountHistoryTests: XCTestCase {
         XCTAssertEqual(store.count(), 3)
     }
 }
+
+final class CycleStoreTests: XCTestCase {
+    private func snapshot(percent: Double, reset: Date, at date: Date) -> ProviderSnapshot {
+        ProviderSnapshot(
+            provider: .codex,
+            windows: [QuotaWindow(
+                id: "codex.primary", kind: .primary, label: "5-hour",
+                percent: percent, resetsAt: reset, windowMinutes: 300, isLimited: false
+            )],
+            origin: .network, source: "test", observedAt: date
+        )
+    }
+
+    func testStoredCyclesAndSamplesAreIsolatedByReset() throws {
+        let store = try TelemetryStore.inMemory()
+        defer { store.close() }
+        let now = Date()
+        let resetA = now.addingTimeInterval(-3_600)
+        let resetB = now.addingTimeInterval(4 * 3_600)
+
+        _ = store.insert(snapshot(percent: 55, reset: resetA, at: now.addingTimeInterval(-7_200)))
+        _ = store.insert(snapshot(percent: 70, reset: resetA, at: now.addingTimeInterval(-5_400)))
+        _ = store.insert(snapshot(percent: 10, reset: resetB, at: now.addingTimeInterval(-30 * 60)))
+        _ = store.insert(snapshot(percent: 20, reset: resetB, at: now))
+
+        let cycles = store.storedCycles(provider: .codex, windowID: "codex.primary")
+        XCTAssertEqual(cycles.count, 2)
+        XCTAssertEqual(cycles.first?.resetAt.timeIntervalSince1970 ?? 0,
+                       resetB.timeIntervalSince1970, accuracy: 0.001)
+        XCTAssertEqual(cycles.last?.resetAt.timeIntervalSince1970 ?? 0,
+                       resetA.timeIntervalSince1970, accuracy: 0.001)
+
+        let current = store.cycleSamples(
+            provider: .codex, windowID: "codex.primary",
+            start: resetB.addingTimeInterval(-5 * 3_600), end: resetB, resetAt: resetB
+        )
+        XCTAssertEqual(current.count, 2)
+        XCTAssertEqual(current.map(\.percent), [10, 20])
+        XCTAssertTrue(current.allSatisfy {
+            abs(($0.resetsAt?.timeIntervalSince1970 ?? 0) - resetB.timeIntervalSince1970) < 0.001
+        })
+
+        let previous = store.cycleSamples(
+            provider: .codex, windowID: "codex.primary",
+            start: resetA.addingTimeInterval(-5 * 3_600), end: resetA, resetAt: resetA
+        )
+        XCTAssertEqual(previous.map(\.percent), [55, 70])
+    }
+}
