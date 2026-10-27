@@ -40,6 +40,7 @@ struct MeterRow: View {
     let reset: Date?
     let flag: String?
     let isLimiting: Bool
+    var forecast: String? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -56,6 +57,12 @@ struct MeterRow: View {
             if let resetText = resetText(until: reset) {
                 Text(resetText).font(.caption).foregroundStyle(.secondary)
             }
+            if let forecast {
+                Text(forecast)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(provider), \(label) quota")
@@ -68,6 +75,7 @@ struct MeterRow: View {
         if isLimiting { bits.append("Limiting window.") }
         if flag != nil { bits.append("Limit reached.") }
         if let resetText = resetText(until: reset) { bits.append(resetText.capitalized + ".") }
+        if let forecast { bits.append(forecast) }
         return bits.joined(separator: " ")
     }
 }

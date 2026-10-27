@@ -174,6 +174,25 @@ public final class QuotaModel: ObservableObject {
         return points
     }
 
+    /// Forecast for a single window. Only 5-hour (rolling) windows are shown;
+    /// everything else abstains.
+    public func forecast(for provider: ProviderID, window: QuotaWindow, now: Date = Date()) -> ForecastState {
+        guard window.kind == .rolling, let store else { return .unavailable("no history") }
+        let samples = store.forecastSamples(
+            provider: provider,
+            windowID: window.id,
+            since: now.addingTimeInterval(-ForecastEngine.lookback),
+            accountRef: historyScopeRef(for: provider)
+        )
+        return ForecastEngine.forecast(
+            samples: samples,
+            now: now,
+            currentPercent: window.percent,
+            resetAt: window.resetsAt,
+            windowMinutes: window.windowMinutes ?? 0
+        )
+    }
+
     public func historyWindowIDs(provider: ProviderID) -> [String] {
         store?.observedWindowIDs(provider: provider) ?? []
     }

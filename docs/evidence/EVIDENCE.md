@@ -65,6 +65,13 @@ the narrowest supported presentation; the History window has a 520 pt minimum.
   Center; the popover now paints an explicit system background so light mode
   cannot inherit a dark wallpaper-tinted material.
 
+## Forecast (v0.6)
+
+The 5-hour forecast line is conditional and abstains unless the guards in
+`ForecastEngine` pass; collecting/unavailable states render nothing. It does not
+drive notifications or charts. Unit tests cover approaching/below/already, flat
+windows, stale data, sampling gaps, reset changes, close calls and copy.
+
 ## Data-integrity checks covered by tests
 
 - Clear History records a deletion cutoff in the same transaction; older local
