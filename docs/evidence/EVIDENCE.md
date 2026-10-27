@@ -58,8 +58,12 @@ the narrowest supported presentation; the History window has a 520 pt minimum.
   fresh network snapshots. `UNUserNotificationCenterDelegate` now presents
   banners while the app is active; `--notification-diagnose` prints the
   authorization/settings report and posts a diagnostic notification.
-- The menu-bar Q is drawn in 18pt coordinates into 1x/2x reps; the earlier
-  build double-scaled it into a clipped blob.
+- The menu-bar mark is two meter bars, rendered once at 4× and downsized to 18pt
+  (a letter monogram read as a search glyph at menu-bar size; the first attempt
+  also double-scaled into a clipped blob).
+- Ad-hoc builds deliver alerts through a floating panel instead of Notification
+  Center; the popover now paints an explicit system background so light mode
+  cannot inherit a dark wallpaper-tinted material.
 
 ## Data-integrity checks covered by tests
 

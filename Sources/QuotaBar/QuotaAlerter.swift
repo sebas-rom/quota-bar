@@ -13,6 +13,7 @@ final class QuotaAlerter: NSObject, ObservableObject, UNUserNotificationCenterDe
     @Published private(set) var issue: String?
 
     private let center = UNUserNotificationCenter.current()
+    private let adHoc = SignatureInfo.isAdHoc
     private let defaults = UserDefaults.standard
     private let enabledKey = "QuotaAlertsEnabled"
     private let stateKey = "QuotaAlertState"
@@ -38,6 +39,16 @@ final class QuotaAlerter: NSObject, ObservableObject, UNUserNotificationCenterDe
             enabled = false
             issue = nil
             defaults.set(false, forKey: enabledKey)
+            return
+        }
+
+        // Unsigned/ad-hoc builds cannot register with Notification Center. Use
+        // the local panel instead of prompting for a permission that would
+        // silently never deliver.
+        if adHoc {
+            enabled = true
+            issue = nil
+            defaults.set(true, forKey: enabledKey)
             return
         }
 
@@ -75,12 +86,21 @@ final class QuotaAlerter: NSObject, ObservableObject, UNUserNotificationCenterDe
         let decisions = AlertRules.evaluate(snapshot, state: &state, now: now)
         guard !decisions.isEmpty else { return }
         save(state)
-        for decision in decisions {
-            post(decision.message, identifier: decision.identifier)
+        if adHoc {
+            let worst = decisions.first(where: { $0.kind == .limit }) ?? decisions[0]
+            AlertToast.shared.show(worst.message)
+        } else {
+            for decision in decisions {
+                post(decision.message, identifier: decision.identifier)
+            }
         }
     }
 
     func sendTest() async {
+        if adHoc {
+            AlertToast.shared.show("Test alert — Quota alerts are working.")
+            return
+        }
         post("Test notification — Quota alerts are working.", identifier: "quotabar.test.\(UUID().uuidString)")
     }
 
@@ -112,6 +132,8 @@ final class QuotaAlerter: NSObject, ObservableObject, UNUserNotificationCenterDe
         lines.append("lockScreen=\(settings.lockScreenSetting.rawValue)")
         lines.append("sound=\(settings.soundSetting.rawValue)")
         lines.append("preferenceEnabled=\(enabled)")
+        lines.append("adHoc=\(adHoc)")
+        lines.append("delivery=\(adHoc ? "panel" : "notification-center")")
 
         let content = UNMutableNotificationContent()
         content.title = "QuotaBar"

@@ -17,8 +17,8 @@ you are looking at.
 
 ## What's new in 0.5 — identity + alerts
 
-- **Real identity.** A static monochrome **Q** monogram in the menu bar (no
-  dynamic state; the numbers already carry that) and a proper app icon in the
+- **Real identity.** A static two-meter mark in the menu bar (matching the app
+  icon; no dynamic state — the numbers carry that) and a proper app icon in the
   bundle, so Finder, the Dock and the History window stop showing a generic one.
 - **Quota alerts, deliberately small.** One opt-in toggle. At **90% used** per
   window you get one notification per cycle, and a **limit reached** escalation
