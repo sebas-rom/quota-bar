@@ -29,6 +29,7 @@ jobs:
           swift --version
 
       - run: swift test
+      - run: python3 scripts/test_appcast.py
 
       - run: make app
 
@@ -44,17 +45,6 @@ jobs:
       - name: Package
         run: ditto -c -k --sequesterRsrc --keepParent QuotaBar.app QuotaBar.zip
 
-      - name: Sign archive (EdDSA)
-        env:
-          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
-        run: |
-          printf '%s' "$SPARKLE_PRIVATE_KEY" > "$RUNNER_TEMP/sparkle.key"
-          chmod 600 "$RUNNER_TEMP/sparkle.key"
-          SIGN="$(.build/artifacts/sparkle/Sparkle/bin/sign_update -p -f "$RUNNER_TEMP/sparkle.key" QuotaBar.zip)"
-          test -n "$SIGN"
-          echo "SIGN=$SIGN" >> "$GITHUB_ENV"
-          echo "LENGTH=$(stat -f%z QuotaBar.zip)" >> "$GITHUB_ENV"
-
       - name: Resolve channel
         id: channel
         run: |
@@ -62,37 +52,78 @@ jobs:
             TAG="${GITHUB_REF#refs/tags/}"
             echo "name=stable" >> "$GITHUB_OUTPUT"
             echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-            echo "url=https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/QuotaBar.zip" >> "$GITHUB_OUTPUT"
           else
             echo "name=nightly" >> "$GITHUB_OUTPUT"
             echo "tag=nightly" >> "$GITHUB_OUTPUT"
-            echo "url=https://github.com/$GITHUB_REPOSITORY/releases/download/nightly/QuotaBar.zip" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Publish build
+      - name: Publish or reuse archive
+        id: archive
         run: |
           set -euo pipefail
-          if [ "${{ steps.channel.outputs.name }}" = "stable" ]; then
-            gh release create "${{ steps.channel.outputs.tag }}" QuotaBar.zip \
-              --title "QuotaBar $SHORT" --generate-notes
+          CHANNEL="${{ steps.channel.outputs.name }}"
+          TAG="${{ steps.channel.outputs.tag }}"
+
+          if [ "$CHANNEL" = "stable" ] && gh release view "$TAG" >/dev/null 2>&1; then
+            # Retry after a partial failure: never replace an already-published
+            # stable archive; reuse its exact bytes and build number.
+            ASSET=$(gh release view "$TAG" --json assets --jq '.assets[].name' | grep -E '^QuotaBar-.*\.zip$' | head -n 1)
+            test -n "$ASSET"
+            gh release download "$TAG" --pattern "$ASSET" --output "$ASSET" --clobber
+            BUILD=$(printf '%s' "$ASSET" | sed -E 's/^QuotaBar-.*-([0-9]{14})\.zip$/\1/')
+            echo "reused existing stable asset $ASSET"
           else
-            gh release delete nightly --cleanup-tag --yes 2>/dev/null || true
-            gh release create nightly QuotaBar.zip --prerelease \
-              --title "Nightly build ($SHORT)" \
-              --notes "Automated build from main at ${GITHUB_SHA:0:7}. Includes nightly-channel updates only."
+            ASSET="QuotaBar-$SHORT-$BUILD.zip"
+            cp QuotaBar.zip "$ASSET"
+            if [ "$CHANNEL" = "stable" ]; then
+              gh release create "$TAG" "$ASSET" --title "QuotaBar $SHORT" --generate-notes
+            else
+              # Immutable nightly asset per build; keep the release+tag stable.
+              gh release view nightly >/dev/null 2>&1 || \
+                gh release create nightly --prerelease --title "Nightly build ($SHORT)" \
+                  --notes "Automated builds from main. Only the newest is advertised."
+              gh release upload nightly "$ASSET" --clobber
+            fi
           fi
+
+          URL="https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$ASSET"
+          echo "asset=$ASSET" >> "$GITHUB_OUTPUT"
+          echo "build=$BUILD" >> "$GITHUB_OUTPUT"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+
+      - name: Sign archive (EdDSA)
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$SPARKLE_PRIVATE_KEY" > "$RUNNER_TEMP/sparkle.key"
+          chmod 600 "$RUNNER_TEMP/sparkle.key"
+          ASSET="${{ steps.archive.outputs.asset }}"
+          SIGN="$(.build/artifacts/sparkle/Sparkle/bin/sign_update -p -f "$RUNNER_TEMP/sparkle.key" "$ASSET")"
+          test -n "$SIGN"
+          echo "SIGN=$SIGN" >> "$GITHUB_ENV"
+          echo "LENGTH=$(stat -f%z "$ASSET")" >> "$GITHUB_ENV"
 
       - name: Update appcast
         run: |
           set -euo pipefail
-          gh release view appcast >/dev/null 2>&1 || \
-            gh release create appcast --title "Update feed" --notes "Sparkle appcast for QuotaBar stable and nightly channels."
-          gh release download appcast --pattern appcast.xml --output appcast.xml --clobber 2>/dev/null || true
+          if gh release view appcast >/dev/null 2>&1; then
+            # An existing feed must be readable; a transient failure must not
+            # silently replace release history with only the current build.
+            gh release download appcast --pattern appcast.xml --output appcast.xml --clobber
+            REQUIRE=--require-existing
+          else
+            gh release create appcast --title "Update feed" \
+              --notes "Sparkle appcast for QuotaBar stable and nightly channels."
+            rm -f appcast.xml
+            REQUIRE=
+          fi
           python3 scripts/appcast.py \
-            --existing appcast.xml --out appcast.xml \
-            --version "$BUILD" --short "$SHORT" \
+            --existing appcast.xml --out appcast.xml $REQUIRE \
+            --version "${{ steps.archive.outputs.build }}" \
+            --short "$SHORT" \
             --channel "${{ steps.channel.outputs.name }}" \
             --signature "$SIGN" --length "$LENGTH" \
-            --url "${{ steps.channel.outputs.url }}" \
-            --title "QuotaBar $SHORT ($BUILD)"
+            --url "${{ steps.archive.outputs.url }}" \
+            --title "QuotaBar $SHORT (${{ steps.archive.outputs.build }})"
           gh release upload appcast appcast.xml --clobber

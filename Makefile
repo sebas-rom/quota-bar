@@ -2,7 +2,7 @@ APP=QuotaBar
 BIN=.build/release/$(APP)
 BUNDLE=QuotaBar.app
 ZIP=$(APP).zip
-SPARKLE_FW=$(firstword $(wildcard .build/*/release/Sparkle.framework))
+SPARKLE_FW=$(dir $(realpath $(BIN)))Sparkle.framework
 
 build:
 	swift build -c release
@@ -14,7 +14,8 @@ app: build
 	cp Info.plist $(BUNDLE)/Contents/Info.plist
 	@test -n "$(SPARKLE_FW)" || (echo "Sparkle.framework not found; run swift build first"; exit 1)
 	ditto "$(SPARKLE_FW)" $(BUNDLE)/Contents/Frameworks/Sparkle.framework
-	codesign --force --deep --sign - $(BUNDLE) 2>/dev/null || true
+	codesign --force --deep --sign - $(BUNDLE)
+	codesign --verify --deep --strict $(BUNDLE)
 	@echo "-> $(BUNDLE)"
 
 install: app

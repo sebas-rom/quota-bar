@@ -69,6 +69,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             DemoHost.shared.present(model: model)
             return
         }
+        // Start Sparkle with the app so automatic checks do not depend on the
+        // popover ever being opened.
+        _ = UpdateController.shared
         model.start()
         wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didWakeNotification,

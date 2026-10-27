@@ -64,12 +64,19 @@ def main() -> None:
     ap.add_argument("--url", required=True)
     ap.add_argument("--title", required=True)
     ap.add_argument("--minimum", default="13.0")
+    ap.add_argument("--require-existing", action="store_true",
+                    help="fail instead of creating a feed when the input is missing/invalid")
     args = ap.parse_args()
 
-    if args.existing and os.path.exists(args.existing) and os.path.getsize(args.existing) > 0:
+    have_existing = bool(args.existing and os.path.exists(args.existing) and os.path.getsize(args.existing) > 0)
+    if args.require_existing and not have_existing:
+        raise SystemExit("appcast: refusing to create a feed when one should already exist")
+    if have_existing:
         try:
             tree = ET.parse(args.existing)
         except ET.ParseError:
+            if args.require_existing:
+                raise SystemExit("appcast: existing feed is malformed; refusing to overwrite")
             tree = skeleton()
     else:
         tree = skeleton()
@@ -82,14 +89,10 @@ def main() -> None:
     if args.channel == "nightly":
         items = [i for i in items if not is_nightly(i)]
 
-    # Cap stable history.
-    stable_items = [i for i in items if not is_nightly(i)]
-    if len(stable_items) > MAX_STABLE:
-        drop = set(id(i) for i in stable_items[:-MAX_STABLE])
-        items = [i for i in items if id(i) not in drop]
-
-    for item in items:
-        channel.remove(item)
+    # Remove every existing item, then re-add the ones we keep. (Removing only
+    # the kept list would leave duplicates behind.)
+    for child in list(channel.findall("item")):
+        channel.remove(child)
 
     item = ET.Element("item")
     ET.SubElement(item, "title").text = args.title
@@ -116,6 +119,12 @@ def main() -> None:
     channel.insert(insert_at, item)
     for existing in items:
         channel.append(existing)
+
+    # Cap stable history after insertion: drop the oldest entries from the end
+    # (items are ordered newest first).
+    stable_items = [i for i in channel.findall("item") if not is_nightly(i)]
+    for old in stable_items[MAX_STABLE:]:
+        channel.remove(old)
 
     ET.indent(tree, space="  ")
     tree.write(args.out, encoding="utf-8", xml_declaration=True)
