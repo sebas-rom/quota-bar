@@ -55,8 +55,11 @@ the narrowest supported presentation; the History window has a 520 pt minimum.
   label; no quota state is encoded in the icon.
 - The app bundle carries `Resources/QuotaBar.icns` via `CFBundleIconFile`.
 - Alerts are opt-in, request permission on enable, and are evaluated only for
-  fresh network snapshots. Live Notification Center delivery is **not** captured
-  here and still needs one manual toggle + test notification.
+  fresh network snapshots. `UNUserNotificationCenterDelegate` now presents
+  banners while the app is active; `--notification-diagnose` prints the
+  authorization/settings report and posts a diagnostic notification.
+- The menu-bar Q is drawn in 18pt coordinates into 1x/2x reps; the earlier
+  build double-scaled it into a clipped blob.
 
 ## Data-integrity checks covered by tests
 

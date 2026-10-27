@@ -9,7 +9,7 @@ import QuotaBarKit
 // Popover: current windows, 24h trend, provenance and freshness.
 // History: a real window with range charts over the local observation store.
 
-private let appVersion = "0.5.0"
+private let appVersion = "0.5.1"
 
 @MainActor
 enum AppEnvironment {
@@ -66,6 +66,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var wakeObserver: NSObjectProtocol?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if ProcessInfo.processInfo.arguments.contains("--notification-diagnose") {
+            Task { @MainActor in
+                let report = await QuotaAlerter.shared.diagnose()
+                print(report)
+                fflush(stdout)
+                try? await Task.sleep(nanoseconds: 800_000_000)
+                NSApplication.shared.terminate(nil)
+            }
+            return
+        }
+
         let model = AppEnvironment.model
         if ProcessInfo.processInfo.arguments.contains("--dark") {
             NSApp.appearance = NSAppearance(named: .darkAqua)
