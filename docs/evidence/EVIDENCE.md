@@ -15,6 +15,7 @@ Command:
 | `popover-dark.png` | same, dark appearance | 320 × 631 |
 | `history-light.png` | `HistoryView` (cycle-first History content) | 620 × 1343 |
 | `history-dark.png` | same, dark appearance | 620 × 1343 |
+| `popover-setup.png` | setup card with one configured provider | 320 × 561 |
 | `menubar-icon.png` | menu-bar template icon (6×) | 108 × 108 |
 | `app-icon.png` | app icon master | 1024 × 1024 |
 
@@ -63,6 +64,12 @@ the narrowest supported presentation; the History window has a 520 pt minimum.
   also double-scaled into a clipped blob).
 - Compact cards show the limiting window per provider with a disclosure chevron;
   full windows are available on demand and in History.
+- Unconfigured providers collapse into one setup card; the setup capture shows a
+  Codex-only install.
+- Rolling 5-hour windows use a trailing frame; fixed windows keep cycle charts.
+- The demo fixture advances Go’s rolling reset between samples, which is the
+  moving-reset case: the popover preview still shows five hours of samples
+  (`Last 5 hours`) and History shows the rolling subtitle instead of a cycle.
 - Ad-hoc builds deliver alerts through a floating panel instead of Notification
   Center; the popover now paints an explicit system background so light mode
   cannot inherit a dark wallpaper-tinted material.

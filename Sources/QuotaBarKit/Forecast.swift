@@ -184,9 +184,9 @@ public enum ForecastCopy {
     public static func line(for state: ForecastState, now: Date = Date()) -> String? {
         switch state {
         case let .approaching95(minutes, _):
-            return "At recent pace · 95% in ~\(duration(minutes))"
+            return "Estimated at recent pace · 95% in ~\(duration(minutes))"
         case .below95:
-            return "At recent pace · below 95% by reset"
+            return "Estimated at recent pace · below 95% at reset"
         case let .already95(resetMinutes):
             return "95% reached · resets in \(duration(resetMinutes))"
         case .collecting, .unavailable:

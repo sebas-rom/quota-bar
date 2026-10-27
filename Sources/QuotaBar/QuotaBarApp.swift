@@ -9,7 +9,7 @@ import QuotaBarKit
 // Popover: current windows, 24h trend, provenance and freshness.
 // History: a real window with range charts over the local observation store.
 
-private let appVersion = "0.9.0"
+private let appVersion = "0.10.0"
 
 @MainActor
 enum AppEnvironment {
@@ -31,6 +31,9 @@ enum QuotaBarMain {
         let args = ProcessInfo.processInfo.arguments
         if args.contains("--status-json") {
             StatusCLI.run()
+        }
+        if args.contains("--forecast-backtest") {
+            ForecastBacktestCLI.run()
         }
         if args.contains("--render-evidence") {
             MainActor.assumeIsolated {
@@ -149,6 +152,47 @@ struct PopoverView: View {
     @State private var confirmRemoveKey = false
     @State private var confirmClearHistory = false
 
+    private var visibleProviders: [ProviderID] {
+        ProviderID.allCases.filter {
+            let presentation = model.presentation(for: $0)
+            return presentation != .checking && presentation != .unconfigured
+        }
+    }
+
+    private func copyToPasteboard(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    private func openSetupInstructions() {
+        if let url = URL(string: "https://github.com/sebas-rom/quota-bar/blob/main/INSTALL.md#setup") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    private func recoveryAction(for provider: ProviderID) -> (() -> Void)? {
+        let state = model.health[provider]?.state
+        switch provider {
+        case .go:
+            return state == .authFailed || state == .entitlementMissing || state == .noCredentials
+                ? { showKeyEntry = true } : nil
+        case .codex:
+            return state == .authFailed || state == .noCredentials
+                ? { copyToPasteboard("codex login") } : nil
+        case .commandCode:
+            return state == .authFailed || state == .noCredentials
+                ? { openSetupInstructions() } : nil
+        }
+    }
+
+    private func recoveryTitle(for provider: ProviderID) -> String? {
+        switch provider {
+        case .go: return "Enter API key…"
+        case .codex: return "Copy sign-in command"
+        case .commandCode: return "Setup instructions"
+        }
+    }
+
     private func cycleTrend(for provider: ProviderID) -> (points: [SamplePoint], start: Date, end: Date, label: String)? {
         // The popover preview is about the current 5-hour window; monthly and
         // weekly shapes live in History. Fall back to the limiting window only
@@ -156,7 +200,16 @@ struct PopoverView: View {
         let windows = model.snapshots[provider]?.windows ?? []
         let window = windows.first { $0.windowMinutes == 300 && ($0.kind == .rolling || $0.kind == .primary) }
             ?? model.snapshots[provider]?.limiting
-        guard let window, let trend = model.cycleTrend(for: provider, window: window) else { return nil }
+        guard let window else { return nil }
+        // Sliding windows have no stable cycle boundary: their preview is the
+        // trailing five hours of observations, not a reset-bounded cycle.
+        if model.isRollingWindow(provider, window) {
+            let now = Date()
+            let points = model.trailingSamples(for: provider, window: window, now: now)
+            guard points.count >= 2 else { return nil }
+            return (points, now.addingTimeInterval(-5 * 3_600), now, "Last 5 hours")
+        }
+        guard let trend = model.cycleTrend(for: provider, window: window) else { return nil }
         return (trend.points, trend.cycle.start, trend.cycle.end, cycleLabel(window.windowMinutes))
     }
 
@@ -214,7 +267,7 @@ struct PopoverView: View {
                 .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
                 .accessibilityElement(children: .combine)
             }
-            ForEach(ProviderID.allCases, id: \.self) { provider in
+            ForEach(visibleProviders, id: \.self) { provider in
                 let trend = cycleTrend(for: provider)
                 ProviderCard(
                     provider: provider,
@@ -225,13 +278,22 @@ struct PopoverView: View {
                     trendEnd: trend?.end,
                     trendLabel: trend?.label,
                     freshness: model.staleness(for: provider),
-                    onEnterKey: provider == .go ? { showKeyEntry = true } : nil,
+                    onRecovery: recoveryAction(for: provider),
+                    recoveryTitle: recoveryTitle(for: provider),
                     forecastFor: { window in
                         guard window.windowMinutes == 300,
                               window.kind == .rolling || window.kind == .primary else { return nil }
                         return ForecastCopy.line(for: model.forecast(for: provider, window: window))
                     },
                     compact: compactCards
+                )
+            }
+            if !model.setupProviders.isEmpty {
+                SetupCard(
+                    providers: model.setupProviders,
+                    checking: Set(model.setupProviders.filter { model.presentation(for: $0) == .checking }),
+                    hasConfigured: model.hasConfiguredProvider,
+                    onEnterKey: { showKeyEntry = true }
                 )
             }
             if showKeyEntry { keyEntry }
@@ -292,7 +354,15 @@ struct PopoverView: View {
                     set: { on in Task { await alerter.setEnabled(on) } }
                 ))
                 if alerter.enabled {
-                    Button("Send Test Notification") {
+                    Menu("Alert providers") {
+                        ForEach(ProviderID.allCases, id: \.self) { provider in
+                            Toggle(provider.displayName, isOn: Binding(
+                                get: { alerter.isEnabled(for: provider) },
+                                set: { alerter.setProvider(provider, enabled: $0) }
+                            ))
+                        }
+                    }
+                    Button("Send Test Alert") {
                         Task { await alerter.sendTest() }
                     }
                 }
@@ -430,7 +500,8 @@ struct ProviderCard: View {
     var trendEnd: Date? = nil
     var trendLabel: String? = nil
     let freshness: String?
-    let onEnterKey: (() -> Void)?
+    var onRecovery: (() -> Void)? = nil
+    var recoveryTitle: String? = nil
     var forecastFor: (QuotaWindow) -> String? = { _ in nil }
     var compact = false
     @State private var expanded = false
@@ -471,6 +542,10 @@ struct ProviderCard: View {
                     .accessibilityLabel("\(provider.displayName) 24 hour trend")
                 }
                 StatusLine(text: statusText, degraded: degraded)
+                if let onRecovery, health?.state != .ok {
+                    Button(recoveryTitle ?? "Fix…", action: onRecovery)
+                        .font(.caption)
+                }
             } else {
                 emptyState
             }
@@ -536,9 +611,9 @@ struct ProviderCard: View {
                 Text(health.message ?? "Unavailable.")
                     .font(.callout).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                if health.state == .noCredentials || health.state == .authFailed || health.state == .entitlementMissing,
-                   let onEnterKey {
-                    Button("Enter API key…", action: onEnterKey)
+                if let onRecovery {
+                    Button(recoveryTitle ?? "Fix…", action: onRecovery)
+                        .font(.caption)
                 }
             } else {
                 HStack(spacing: 6) {
@@ -581,5 +656,88 @@ final class HistoryWindowController: NSObject, NSWindowDelegate {
 
     func windowWillClose(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+    }
+}
+
+
+struct SetupCard: View {
+    let providers: [ProviderID]
+    var checking: Set<ProviderID> = []
+    let hasConfigured: Bool
+    let onEnterKey: () -> Void
+    @State private var copied: ProviderID?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(hasConfigured ? "Connect another provider" : "Get started with QuotaBar")
+                .font(.headline)
+            Text(hasConfigured
+                 ? "Add another service whenever you need it."
+                 : "QuotaBar reads usage locally and never sends it to another server.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            ForEach(providers, id: \.self) { provider in
+                Divider()
+                row(provider)
+            }
+        }
+        .padding(12)
+        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    @ViewBuilder
+    private func row(_ provider: ProviderID) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(provider.displayName).font(.subheadline.weight(.medium))
+            if checking.contains(provider) {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("Checking…").font(.caption).foregroundStyle(.secondary)
+                }
+            } else {
+                switch provider {
+                case .go:
+                    Text("Enter your Personal API key.").font(.caption).foregroundStyle(.secondary)
+                    Button("Enter API key…", action: onEnterKey)
+                        .font(.caption)
+                case .codex:
+                    Text("Sign in with the Codex CLI, then refresh.").font(.caption).foregroundStyle(.secondary)
+                    HStack(spacing: 8) {
+                        Text("codex login").font(.system(.caption, design: .monospaced))
+                        Button(copied == .codex ? "Copied" : "Copy") {
+                            copyToPasteboard("codex login", provider)
+                        }
+                        Button("Open ~/.codex") {
+                            NSWorkspace.shared.open(homeDir().appendingPathComponent(".codex"))
+                        }
+                    }
+                    .font(.caption)
+                case .commandCode:
+                    Text("Add your key under provider.commandcode.settings.apiKey in ~/.config/opencode/opencode.json.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: 8) {
+                        Button(copied == .commandCode ? "Copied" : "Copy config path") {
+                            copyToPasteboard(homeDir().appendingPathComponent(".config/opencode/opencode.json").path, provider)
+                        }
+                        Button("Setup instructions") {
+                            if let url = URL(string: "https://github.com/sebas-rom/quota-bar/blob/main/INSTALL.md#setup") {
+                                NSWorkspace.shared.open(url)
+                            }
+                        }
+                    }
+                    .font(.caption)
+                }
+            }
+        }
+    }
+
+    private func copyToPasteboard(_ text: String, _ provider: ProviderID) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        copied = provider
     }
 }

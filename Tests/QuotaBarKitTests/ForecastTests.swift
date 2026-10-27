@@ -37,7 +37,7 @@ final class ForecastTests: XCTestCase {
         XCTAssertEqual(resetMinutes, 180, accuracy: 1)
         XCTAssertEqual(
             ForecastCopy.line(for: state),
-            "At recent pace · 95% in ~50m"
+            "Estimated at recent pace · 95% in ~50m"
         )
     }
 
@@ -49,7 +49,7 @@ final class ForecastTests: XCTestCase {
             return XCTFail("expected below95, got \(state)")
         }
         XCTAssertEqual(resetMinutes, 60, accuracy: 1)
-        XCTAssertEqual(ForecastCopy.line(for: state), "At recent pace · below 95% by reset")
+        XCTAssertEqual(ForecastCopy.line(for: state), "Estimated at recent pace · below 95% at reset")
     }
 
     func testSlowRateStillSaysBelowUntilReset() {

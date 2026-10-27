@@ -27,6 +27,11 @@ enum EvidenceRenderer {
         renderPopover(model: model, to: directory.appendingPathComponent("popover-dark.png"), dark: true)
         renderHistory(model: model, to: directory.appendingPathComponent("history-light.png"), dark: false)
         renderHistory(model: model, to: directory.appendingPathComponent("history-dark.png"), dark: true)
+        let setupStore = try? TelemetryStore.inMemory()
+        let setupModel = QuotaModel(store: setupStore, isDemo: true)
+        DemoData.seedSetup(setupModel)
+        renderPopover(model: setupModel, to: directory.appendingPathComponent("popover-setup.png"), dark: false)
+
         if let png = MenuBarIcon.png(pixelSize: 72) {
             try? png.write(to: directory.appendingPathComponent("menubar-icon.png"))
         }
