@@ -1,128 +1,296 @@
 import Foundation
 import Combine
 
-// MARK: - Provider snapshots (what the UI renders; never contains secrets)
+// MARK: - Backfill
 
-public struct CodexSnapshot: Equatable {
-    public var tokenPresent = false
-    public var primary: Double?
-    public var primaryReset: Date?
-    public var secondary: Double?
-    public var secondaryReset: Date?
-    public var plan: String?
-    public var note = "—"
-    public init() {}
+/// Imports timestamped local Codex observations. Extracted so cancellation can
+/// be proven deterministically instead of raced against a real importer.
+public enum CodexBackfill {
+    @discardableResult
+    public static func importObservations(
+        _ observations: [CodexLogObservation],
+        into store: TelemetryStore,
+        accountRef: String?,
+        isCancelled: () -> Bool = { false }
+    ) -> Int {
+        var inserted = 0
+        for observation in observations {
+            if isCancelled() { break }
+            inserted += store.insert(ProviderSnapshot(
+                provider: .codex,
+                windows: observation.windows,
+                plan: observation.plan,
+                accountRef: accountRef,
+                origin: .localLog,
+                source: "Codex local session log",
+                observedAt: observation.observedAt
+            ))
+        }
+        return inserted
+    }
 }
+
+// MARK: - Model
+//
+// Keeps the last good snapshot per provider, writes observations to the local
+// store, and serves history to the UI. A failed probe never erases what we
+// already know: the snapshot stays and its age is shown instead.
 
 @MainActor
 public final class QuotaModel: ObservableObject {
-    @Published public var goState: GoFetchState = .noKey
-    @Published public var codex = CodexSnapshot()
-    @Published public var lastUpdate: Date?
-    @Published public var busy = false
+    @Published public private(set) var snapshots: [ProviderID: ProviderSnapshot] = [:]
+    @Published public private(set) var health: [ProviderID: ProviderHealth] = [:]
+    @Published public private(set) var refreshing = false
+    @Published public private(set) var lastRefresh: Date?
+    @Published public private(set) var historyRevision = 0
+    @Published public private(set) var storeIssue: String?
+    @Published public private(set) var historyCount = 0
 
-    private var generation = 0
-    private let session: URLSession
+    public let isDemo: Bool
+    public let store: TelemetryStore?
 
-    public init(session: URLSession = .shared) {
-        self.session = session
+    private let probes: QuotaProbes
+    private var timer: Timer?
+    private var trendCache: [String: [SamplePoint]] = [:]
+    private var lastPrune = Date.distantPast
+    private var backfillTask: Task<Void, Never>?
+
+    public init(probes: QuotaProbes = QuotaProbes(), store: TelemetryStore? = nil, isDemo: Bool = false) {
+        self.probes = probes
+        self.store = store
+        self.isDemo = isDemo
     }
+
+    /// Production instance: opens the on-disk store, degrading to memory-less
+    /// mode (quota still works) if the store cannot be opened.
+    public static func live() -> QuotaModel {
+        do {
+            let store = try TelemetryStore(path: TelemetryStore.defaultPath())
+            let model = QuotaModel(store: store)
+            model.historyCount = store.count()
+            return model
+        } catch {
+            let model = QuotaModel()
+            model.storeIssue = "History is off: \(error)."
+            return model
+        }
+    }
+
+    // MARK: lifecycle
+
+    public func start() {
+        guard timer == nil else { return }
+        seedFromLocalCodex()
+        runCodexBackfillIfNeeded()
+        Task { await refresh() }
+        let timer = Timer(timeInterval: 300, repeats: true) { [weak self] _ in
+            Task { @MainActor in await self?.refresh() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
+    }
+
+    public func stop() {
+        timer?.invalidate()
+        timer = nil
+    }
+
+    // MARK: refresh
+
+    public func refresh() async {
+        guard !refreshing else { return }
+        refreshing = true
+        defer { refreshing = false }
+
+        async let goResult = probes.go()
+        async let codexResult = probes.codex()
+        let (go, codex) = await (goResult, codexResult)
+
+        apply(go, provider: .go)
+        apply(codex, provider: .codex)
+        lastRefresh = Date()
+        pruneIfNeeded()
+        invalidateHistory()
+    }
+
+    private func apply(_ result: ProbeResult, provider: ProviderID) {
+        switch result {
+        case let .ok(snapshot):
+            snapshots[provider] = snapshot
+            health[provider] = ProviderHealth(state: .ok, attemptedAt: Date())
+            store?.insert(snapshot)
+        case let .stale(snapshot, state, message):
+            snapshots[provider] = snapshot
+            health[provider] = ProviderHealth(state: state, message: message, attemptedAt: Date())
+            store?.insert(snapshot)
+        case let .failed(state, message):
+            // Keep the last good snapshot on purpose.
+            health[provider] = ProviderHealth(state: state, message: message, attemptedAt: Date())
+        }
+    }
+
+    private func pruneIfNeeded() {
+        guard let store, Date().timeIntervalSince(lastPrune) > 86_400 else { return }
+        lastPrune = Date()
+        store.prune(olderThan: Date().addingTimeInterval(-90 * 86_400))
+        historyCount = store.count()
+    }
+
+    // MARK: history
+
+    public func invalidateHistory() {
+        trendCache.removeAll()
+        historyCount = store?.count() ?? 0
+        historyRevision &+= 1
+    }
+
+    public func trend(provider: ProviderID, windowID: String, hours: Int = 24) -> [SamplePoint] {
+        // Live rows are account-scoped; device-level local-log rows (null
+        // account) are included and labelled in the UI, never presented as
+        // belonging to the signed-in account.
+        let accountRef = historyScopeRef(for: provider)
+        let key = "\(provider.rawValue)|\(windowID)|\(hours)|\(accountRef ?? "-")"
+        if let cached = trendCache[key] { return cached }
+        guard let store else { return [] }
+        let since = Date().addingTimeInterval(-Double(hours) * 3_600)
+        let points = downsample(
+            store.series(provider: provider, windowID: windowID, since: since, accountRef: accountRef),
+            max: 240
+        )
+        trendCache[key] = points
+        return points
+    }
+
+    public func historyWindowIDs(provider: ProviderID) -> [String] {
+        store?.observedWindowIDs(provider: provider) ?? []
+    }
+
+    /// Cancels any in-flight import before deleting, so nothing can reappear
+    /// after the user confirms. Async because it waits for that cancellation.
+    public func clearHistory() async {
+        let inFlight = backfillTask
+        inFlight?.cancel()
+        backfillTask = nil
+        _ = await inFlight?.value
+        // Deletion + cutoff in one transaction; anything observed before the
+        // cutoff can never be persisted again.
+        let cleared = store?.clearAll() ?? false
+        if cleared {
+            store?.setMeta("codex_backfill_v1", "cleared")
+            storeIssue = nil
+        } else {
+            storeIssue = "History could not be cleared. Try again."
+        }
+        invalidateHistory()
+        lastPrune = Date()
+    }
+
+    // MARK: local Codex seeding + backfill
+
+    /// Codex writes rate-limit snapshots into its own session log. Use the most
+    /// recent one so the card is populated before the first network round-trip.
+    private func seedFromLocalCodex() {
+        guard snapshots[.codex] == nil, let local = CodexLocalLog.latest() else { return }
+        let snapshot = ProviderSnapshot(
+            provider: .codex,
+            windows: local.windows,
+            plan: local.plan,
+            // Device-level: local logs carry no trustworthy account identity.
+            accountRef: nil,
+            origin: .localLog,
+            source: "Codex local session log",
+            observedAt: local.observedAt
+        )
+        snapshots[.codex] = snapshot
+        store?.insert(snapshot)
+    }
+
+    /// One-time import of the last 14 days of Codex rate-limit snapshots.
+    /// Idempotent (primary key) and recorded in meta so it runs once.
+    public func runCodexBackfillIfNeeded() {
+        guard let store, backfillTask == nil else { return }
+        let marker = store.meta("codex_backfill_v1")
+        guard marker == nil || marker == "running" else { return }
+        store.setMeta("codex_backfill_v1", "running")
+        backfillTask = Task.detached(priority: .utility) { [weak self] in
+            let since = Date().addingTimeInterval(-14 * 86_400)
+            let observations = CodexLocalLog.observations(since: since)
+            let inserted = CodexBackfill.importObservations(observations, into: store, accountRef: nil) {
+                Task.isCancelled
+            }
+            if Task.isCancelled { return }
+            store.setMeta("codex_backfill_v1", "\(inserted)")
+            await MainActor.run { [weak self] in
+                self?.backfillTask = nil
+                self?.invalidateHistory()
+            }
+        }
+    }
+
+    /// Scope for history queries: the account the Codex CLI is currently signed
+    /// in as. Used to select account-scoped live rows; local-log rows stay
+    /// unattributed and are shown as device-level.
+    private func localAccountRef() -> String? {
+        accountRef(readCodexCreds()?.accountId)
+    }
+
+    private func historyScopeRef(for provider: ProviderID) -> String? {
+        guard provider == .codex else { return nil }
+        return localAccountRef() ?? snapshots[provider]?.accountRef
+    }
+
+    public func hasDeviceLevelHistory(provider: ProviderID, windowID: String, hours: Int) -> Bool {
+        store?.hasUnattributedHistory(
+            provider: provider,
+            windowID: windowID,
+            since: Date().addingTimeInterval(-Double(hours) * 3_600)
+        ) ?? false
+    }
+
+    // MARK: presentation
 
     public var barText: String {
         var parts: [String] = []
-        if case let .ready(usage, _) = goState, let lim = usage.limiting {
-            parts.append("Go \(Int(lim.window.percent.rounded()))%")
-        } else if !goKeyKnown {
-            parts.append("Go …")
-        }
-        if let p = codex.primary {
-            parts.append("Cx \(Int(p.rounded()))%")
-        } else if codex.tokenPresent {
-            parts.append("Cx …")
+        for provider in ProviderID.allCases {
+            if let limiting = snapshots[provider]?.limiting {
+                parts.append("\(provider.shortName) \(Int(limiting.percent.rounded()))%")
+            } else if health[provider]?.state == .noCredentials {
+                continue
+            } else {
+                parts.append("\(provider.shortName) …")
+            }
         }
         return parts.isEmpty ? "○" : parts.joined(separator: " · ")
     }
 
-    public var goKeyKnown: Bool { !goKeyCandidates().isEmpty }
-
-    public func refresh() async {
-        if busy { return }
-        busy = true
-        defer { busy = false }
-        generation += 1
-        let gen = generation
-        async let g: Void = loadGo(gen: gen)
-        async let c: Void = loadCodex(gen: gen)
-        _ = await (g, c)
-        if gen == generation { lastUpdate = Date() }
+    public func staleness(for provider: ProviderID, now: Date = Date()) -> String? {
+        guard let snapshot = snapshots[provider] else { return nil }
+        let age = now.timeIntervalSince(snapshot.observedAt)
+        let degraded = (health[provider]?.state ?? .ok) != .ok
+        guard degraded || age > 900 else { return nil }
+        return freshnessText(for: snapshot.observedAt, now: now)
     }
 
-    // MARK: Go
-
-    func loadGo(gen: Int) async {
-        let candidates = goKeyCandidates()
-        guard !candidates.isEmpty else {
-            if gen == generation { goState = .noKey }
-            return
-        }
-        var lastState: GoFetchState = .noKey
-        for cand in candidates {
-            let st = await fetchGo(key: cand.key, source: cand.source)
-            // First success wins; keep probing other keys only on auth failure.
-            if case .ready = st {
-                if gen == generation { goState = st }
-                return
-            }
-            lastState = st
-            switch st {
-            case .authFailed, .subscriptionUnavailable: continue
-            default: break
-            }
-            break
-        }
-        if gen == generation { goState = lastState }
-    }
-
-    func fetchGo(key: String, source: String) async -> GoFetchState {
-        var req = URLRequest(url: URL(string: "https://opencode.ai/zen/go/v1/usage")!)
-        req.httpMethod = "GET"
-        req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
-        req.setValue("application/json", forHTTPHeaderField: "Accept")
-        req.timeoutInterval = 15
-        let data: Data
-        let status: Int
-        do {
-            let (d, resp) = try await session.data(for: req)
-            guard let http = resp as? HTTPURLResponse else { return .unexpected("bad response") }
-            data = d
-            status = http.statusCode
-        } catch {
-            if (error as NSError).domain == NSURLErrorDomain { return .offline }
-            return .offline
-        }
-        if status != 200 {
-            return goStateForStatus(status) ?? .unexpected("HTTP \(status)")
-        }
-        do {
-            let usage = try decodeGoUsage(data)
-            return .ready(usage, source: source)
-        } catch {
-            return .unexpected("unreadable response")
+    public func provenance(for provider: ProviderID) -> String {
+        guard let snapshot = snapshots[provider] else { return "—" }
+        switch snapshot.origin {
+        case .network: return snapshot.source
+        case .localLog: return "local Codex log"
+        case .demo: return "demo data"
         }
     }
 
-    /// Validates a user-entered key against /usage; stores in Keychain on success.
+    // MARK: key management
+
     public func validateAndSaveGoKey(_ raw: String) async -> String? {
         let key = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !key.isEmpty else { return "Enter a key first." }
-        let st = await fetchGo(key: key, source: "entered key")
-        switch st {
-        case let .ready(usage, _):
+        let state = await probes.fetchGo(key: key, source: "entered key")
+        switch state {
+        case .ready:
             guard saveKeychainKey(account: quotaBarGoAccount, value: key) else {
                 return "Key is valid but Keychain save failed."
             }
-            goState = st
-            _ = usage
             await refresh()
             return nil
         case .authFailed:
@@ -144,51 +312,29 @@ public final class QuotaModel: ObservableObject {
 
     public func forgetGoKey() {
         deleteKeychainKey(account: quotaBarGoAccount)
+        health[.go] = ProviderHealth(state: .noCredentials, message: "Saved key removed.", attemptedAt: Date())
+        snapshots[.go] = nil
         Task { await refresh() }
     }
 
-    // MARK: Codex (unchanged endpoint, plus reset capture)
+    public var goKeyKnown: Bool { !goKeyCandidates().isEmpty }
 
-    func loadCodex(gen: Int) async {
-        guard let creds = readCodexCreds() else {
-            if gen == generation { codex = CodexSnapshot() }
-            return
-        }
-        var st = CodexSnapshot()
-        st.tokenPresent = true
-        st.note = "checking…"
-        if gen == generation { codex = st }
-        do {
-            var req = URLRequest(url: URL(string: "https://chatgpt.com/backend-api/wham/usage")!)
-            req.setValue("Bearer \(creds.token)", forHTTPHeaderField: "Authorization")
-            if let aid = creds.accountId { req.setValue(aid, forHTTPHeaderField: "ChatGPT-Account-Id") }
-            req.timeoutInterval = 15
-            let (data, resp) = try await session.data(for: req)
-            guard (resp as? HTTPURLResponse)?.statusCode == 200 else {
-                st.note = "HTTP \((resp as? HTTPURLResponse)?.statusCode ?? -1)"
-                if gen == generation { codex = st }
-                return
-            }
-            let obj = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
-            st.plan = obj["plan_type"] as? String
-            if let rl = obj["rate_limit"] as? [String: Any] {
-                var best: (Double, Int)?
-                for (k, v) in rl {
-                    guard let w = v as? [String: Any],
-                          let pct: Double = (w["used_percent"] as? Double) ?? (w["used_percent"] as? Int).map(Double.init)
-                    else { continue }
-                    let secs = (w["limit_window_seconds"] as? Int) ?? Int.max
-                    if best == nil || secs < best!.1 { best = (pct, secs) }
-                    let reset = (w["reset_after_seconds"] as? Int).map { Date().addingTimeInterval(TimeInterval($0)) }
-                    if k == "primary_window" { st.primary = pct; st.primaryReset = reset }
-                    if k == "secondary_window" { st.secondary = pct; st.secondaryReset = reset }
-                }
-                if st.primary == nil { st.primary = best?.0 }
-            }
-            st.note = st.primary != nil ? "ok" : "no window"
-        } catch {
-            st.note = "fetch failed"
-        }
-        if gen == generation { codex = st }
+    public var goKeySourceText: String {
+        if isDemo { return "demo data" }
+        if let snapshot = snapshots[.go], snapshot.origin == .network { return snapshot.source }
+        if loadKeychainKey(account: quotaBarGoAccount) != nil { return "Keychain (saved)" }
+        if !goKeyCandidates().isEmpty { return "opencode auth.json" }
+        return "none"
+    }
+
+    // MARK: demo
+
+    /// Only the demo harness calls this (`--demo`), never the shipped flow.
+    public func ingestDemo(_ snapshot: ProviderSnapshot) {
+        guard isDemo else { return }
+        snapshots[snapshot.provider] = snapshot
+        health[snapshot.provider] = ProviderHealth(state: .ok, attemptedAt: Date())
+        lastRefresh = Date()
+        invalidateHistory()
     }
 }

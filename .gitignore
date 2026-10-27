@@ -2,3 +2,4 @@
 *.zip
 *.app/
 .DS_Store
+:memory:*
