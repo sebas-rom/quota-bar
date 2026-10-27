@@ -242,20 +242,22 @@ final class HistoryClearTests: XCTestCase {
         )
     }
 
-    func testClearAllBlocksOldLocalRowsAndAllowsLiveOnes() throws {
+    func testClearAllBlocksAnythingObservedBeforeTheCutoff() throws {
         let store = try TelemetryStore.inMemory()
         defer { store.close() }
         let now = Date()
+        // A refresh that started before the clear and finishes after it.
+        let inFlight = live(15, at: now.addingTimeInterval(-5))
 
         XCTAssertEqual(store.insert(local(10, at: now.addingTimeInterval(-3_600))), 1)
-        store.clearAll(now: now)
+        XCTAssertTrue(store.clearAll(now: now))
         XCTAssertEqual(store.count(), 0)
 
-        // The exact resurrection path: launch/refresh re-reads the old log.
+        // The exact resurrection paths: local re-read and a pre-clear network probe.
         XCTAssertEqual(store.insert(local(10, at: now.addingTimeInterval(-3_600))), 0)
-        // Live observations after clearing are recorded normally.
-        XCTAssertEqual(store.insert(live(20, at: now)), 1)
-        // New local observations (newer than the cutoff) are still useful.
+        XCTAssertEqual(store.insert(inFlight), 0, "an in-flight pre-clear probe must not land")
+        // Genuinely fresh observations are recorded normally.
+        XCTAssertEqual(store.insert(live(20, at: now.addingTimeInterval(1))), 1)
         XCTAssertEqual(store.insert(local(21, at: now.addingTimeInterval(300))), 1)
         XCTAssertEqual(store.count(), 2)
     }
@@ -275,6 +277,8 @@ final class HistoryClearTests: XCTestCase {
         let second = try TelemetryStore(path: url)
         XCTAssertEqual(second.insert(local(10, at: now.addingTimeInterval(-60))), 0,
                        "a relaunch must not resurrect cleared local history")
+        XCTAssertEqual(second.insert(live(10, at: now.addingTimeInterval(-60))), 0,
+                       "a relaunch must not accept a pre-clear observation either")
         second.close()
     }
 

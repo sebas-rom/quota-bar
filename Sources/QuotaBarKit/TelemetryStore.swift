@@ -77,10 +77,11 @@ public final class TelemetryStore: @unchecked Sendable {
     @discardableResult
     public func insert(_ snapshot: ProviderSnapshot) -> Int {
         withLock { db in
-            // Local-log observations can be re-read at every launch or offline
-            // refresh; never let them resurrect history the user deleted.
-            if snapshot.origin != .network, let cutoff = clearedAt,
-               snapshot.observedAt <= cutoff {
+            // Nothing observed before the deletion cutoff may be stored again,
+            // whatever its origin: a slow in-flight probe must not resurrect
+            // data the user just deleted. Genuinely fresh observations are
+            // timestamped after the cutoff and pass.
+            if let cutoff = clearedAt, snapshot.observedAt <= cutoff {
                 return 0
             }
             let sql = """
@@ -123,11 +124,12 @@ public final class TelemetryStore: @unchecked Sendable {
 
     /// Deletes every observation and records the deletion cutoff in the same
     /// transaction, so a crash can never leave the store empty without the
-    /// cutoff (or vice versa).
-    public func clearAll(now: Date = Date()) {
+    /// cutoff (or vice versa). Returns false if the transaction did not commit.
+    @discardableResult
+    public func clearAll(now: Date = Date()) -> Bool {
         lock.lock(); defer { lock.unlock() }
-        guard let db else { return }
-        guard sqlite3_exec(db, "BEGIN IMMEDIATE", nil, nil, nil) == SQLITE_OK else { return }
+        guard let db else { return false }
+        guard sqlite3_exec(db, "BEGIN IMMEDIATE", nil, nil, nil) == SQLITE_OK else { return false }
         let delete = sqlite3_exec(db, "DELETE FROM sample", nil, nil, nil) == SQLITE_OK
         var stmt: OpaquePointer?
         var cutoffWritten = false
@@ -136,12 +138,16 @@ public final class TelemetryStore: @unchecked Sendable {
             cutoffWritten = sqlite3_step(stmt) == SQLITE_DONE
         }
         sqlite3_finalize(stmt)
-        if delete && cutoffWritten {
-            sqlite3_exec(db, "COMMIT", nil, nil, nil)
-            clearedAt = now
-        } else {
+        guard delete, cutoffWritten else {
             sqlite3_exec(db, "ROLLBACK", nil, nil, nil)
+            return false
         }
+        guard sqlite3_exec(db, "COMMIT", nil, nil, nil) == SQLITE_OK else {
+            sqlite3_exec(db, "ROLLBACK", nil, nil, nil)
+            return false
+        }
+        clearedAt = now
+        return true
     }
 
     // MARK: reads

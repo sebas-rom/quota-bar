@@ -172,10 +172,15 @@ public final class QuotaModel: ObservableObject {
         inFlight?.cancel()
         backfillTask = nil
         _ = await inFlight?.value
-        // Deletion + cutoff in one transaction; local-log rows older than the
+        // Deletion + cutoff in one transaction; anything observed before the
         // cutoff can never be persisted again.
-        store?.clearAll()
-        store?.setMeta("codex_backfill_v1", "cleared")
+        let cleared = store?.clearAll() ?? false
+        if cleared {
+            store?.setMeta("codex_backfill_v1", "cleared")
+            storeIssue = nil
+        } else {
+            storeIssue = "History could not be cleared. Try again."
+        }
         invalidateHistory()
         lastPrune = Date()
     }
