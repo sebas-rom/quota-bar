@@ -16,6 +16,25 @@ freshness of what you are looking at.
 
 ![Popover](docs/evidence/popover-light.png)
 
+## What's new in 0.10 — onboarding, alert control, replay
+
+- **First-run setup.** Providers without credentials collapse into one
+  “Connect another provider” card with the exact next step: Go key entry, the
+  `codex login` command (copyable), or the Command Code config path (copyable).
+  A Codex-only install shows one Codex card plus setup, not two dead error cards.
+- **Actionable failures.** A retained snapshot with a 401 now offers the recovery
+  action instead of only a status line.
+- **Alert control.** Per-provider alert toggles, coalesced batches (limit beats
+  warning, extra windows counted), a close button, pointer-screen placement,
+  Reduce Motion support, and accurate Focus wording. Ad-hoc alerts are a panel;
+  signed builds use Notification Center.
+- **Rolling 5-hour history fix.** Go’s rolling window and Codex’s primary window
+  advance their reset with time, so fixed-cycle charts fragmented. They now use
+  a trailing 5h frame with a 2h projection; fixed windows keep cycle charts.
+- **Forecast replay.** `qbar --forecast-backtest` scores fixed cycles only,
+  causally, with censoring; `insufficient_data` is expected. See
+  [docs/FORECAST.md](docs/FORECAST.md).
+
 ## What's new in 0.9 — agent status
 
 `qbar --status-json` gives local agents a read-only, timestamped snapshot of every
@@ -94,7 +113,9 @@ nothing. Forecasts never drive notifications, charts, or provider switching.
 - **Quota alerts, deliberately small.** One opt-in toggle. At **90% used** per
   window you get one notification per cycle, and a **limit reached** escalation
   even if the warning already fired. No 75/97 tiers, no reset pings, no
-  cross-provider nudges; macOS Focus handles interruption.
+  cross-provider nudges. On ad-hoc builds these are in-app panels and may appear
+  during Focus; turn alerts off to prevent them. Signed builds use Notification
+  Center and follow macOS Focus settings.
   - `Codex 5-hour quota is 90% used. Resets in 48 min.`
   - `OpenCode Go weekly quota is 92% used. Resets in 2 days.`
   - `Codex 5-hour limit reached. Resets in 18 min.`
@@ -200,7 +221,7 @@ the store. No third-party servers, no analytics, no tracking.
 Requires macOS 13+, Xcode 15+ / Swift 5.9+.
 
 ```sh
-swift test          # parsers, store, cycles, forecasts, alerts (81 tests)
+swift test          # parsers, store, cycles, forecasts, alerts, replay (91 tests)
 make app            # -> QuotaBar.app (LSUIElement, menu-bar only)
 make run            # launch
 make install        # build and replace /Applications/QuotaBar.app, relaunch

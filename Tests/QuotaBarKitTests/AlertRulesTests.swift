@@ -123,3 +123,32 @@ final class AlertRulesTests: XCTestCase {
         XCTAssertEqual(decoded, state)
     }
 }
+
+final class AlertCoalescerTests: XCTestCase {
+    private func decision(_ kind: AlertKind, percent: Double, id: String) -> AlertDecision {
+        AlertDecision(provider: .codex, windowID: id, kind: kind, message: id,
+                      identifier: id, percent: percent)
+    }
+
+    func testLimitBeatsWarning() {
+        let batch = AlertCoalescer.best([
+            decision(.warning, percent: 97, id: "a"),
+            decision(.limit, percent: 100, id: "b"),
+            decision(.warning, percent: 91, id: "c"),
+        ])
+        XCTAssertEqual(batch?.decision.identifier, "b")
+        XCTAssertEqual(batch?.additionalCount, 2)
+    }
+
+    func testHighestPercentWithinSameKind() {
+        let batch = AlertCoalescer.best([
+            decision(.warning, percent: 91, id: "low"),
+            decision(.warning, percent: 96, id: "high"),
+        ])
+        XCTAssertEqual(batch?.decision.identifier, "high")
+    }
+
+    func testEmptyBatch() {
+        XCTAssertNil(AlertCoalescer.best([]))
+    }
+}

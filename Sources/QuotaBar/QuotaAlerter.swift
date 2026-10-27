@@ -11,15 +11,25 @@ final class QuotaAlerter: NSObject, ObservableObject, UNUserNotificationCenterDe
 
     @Published private(set) var enabled: Bool
     @Published private(set) var issue: String?
+    @Published private(set) var providerEnabled: [ProviderID: Bool]
 
     private let center = UNUserNotificationCenter.current()
     private let adHoc = SignatureInfo.isAdHoc
     private let defaults = UserDefaults.standard
     private let enabledKey = "QuotaAlertsEnabled"
     private let stateKey = "QuotaAlertState"
+    private let providersKey = "QuotaAlertProviders"
+    private var pending: [AlertDecision] = []
+    private var flushWork: DispatchWorkItem?
 
     private override init() {
         enabled = defaults.bool(forKey: enabledKey)
+        let saved = defaults.dictionary(forKey: providersKey) as? [String: Bool] ?? [:]
+        var preferences: [ProviderID: Bool] = [:]
+        for provider in ProviderID.allCases {
+            preferences[provider] = saved[provider.rawValue] ?? true
+        }
+        providerEnabled = preferences
         super.init()
         // Without a delegate, macOS silences notifications while the app is
         // active — which is exactly when the test button is clicked.
@@ -79,20 +89,44 @@ final class QuotaAlerter: NSObject, ObservableObject, UNUserNotificationCenterDe
         defaults.set(granted, forKey: enabledKey)
     }
 
+    func isEnabled(for provider: ProviderID) -> Bool {
+        providerEnabled[provider] ?? true
+    }
+
+    func setProvider(_ provider: ProviderID, enabled: Bool) {
+        providerEnabled[provider] = enabled
+        let saved = Dictionary(uniqueKeysWithValues: providerEnabled.map { ($0.key.rawValue, $0.value) })
+        defaults.set(saved, forKey: providersKey)
+    }
+
     /// Called only for fresh, successful network snapshots.
     func handle(_ snapshot: ProviderSnapshot, now: Date = Date()) {
-        guard enabled, snapshot.origin == .network else { return }
+        guard enabled, isEnabled(for: snapshot.provider), snapshot.origin == .network else { return }
         var state = loadState()
         let decisions = AlertRules.evaluate(snapshot, state: &state, now: now)
         guard !decisions.isEmpty else { return }
         save(state)
+        pending.append(contentsOf: decisions)
+        scheduleFlush()
+    }
+
+    private func scheduleFlush() {
+        flushWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.flushPending() }
+        flushWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
+    }
+
+    private func flushPending() {
+        guard let batch = AlertCoalescer.best(pending) else { return }
+        pending = []
+        let text = batch.additionalCount > 0
+            ? "\(batch.decision.message) (+\(batch.additionalCount) more)"
+            : batch.decision.message
         if adHoc {
-            let worst = decisions.first(where: { $0.kind == .limit }) ?? decisions[0]
-            AlertToast.shared.show(worst.message)
+            AlertToast.shared.show(text)
         } else {
-            for decision in decisions {
-                post(decision.message, identifier: decision.identifier)
-            }
+            post(text, identifier: batch.decision.identifier)
         }
     }
 
@@ -101,7 +135,14 @@ final class QuotaAlerter: NSObject, ObservableObject, UNUserNotificationCenterDe
             AlertToast.shared.show("Test alert — Quota alerts are working.")
             return
         }
-        post("Test notification — Quota alerts are working.", identifier: "quotabar.test.\(UUID().uuidString)")
+        let settings = await center.notificationSettings()
+        switch settings.authorizationStatus {
+        case .authorized, .provisional, .ephemeral:
+            post("Test notification — Quota alerts are working.", identifier: "quotabar.test.\(UUID().uuidString)")
+        default:
+            issue = "Notifications are off. Enable QuotaBar in System Settings → Notifications."
+            if let issue { AlertToast.shared.show(issue) }
+        }
     }
 
     private func post(_ body: String, identifier: String) {

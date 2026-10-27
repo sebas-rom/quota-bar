@@ -20,6 +20,26 @@ public struct AlertDecision: Equatable, Sendable {
     public let kind: AlertKind
     public let message: String
     public let identifier: String
+    public let percent: Double
+}
+
+public struct AlertBatch: Equatable, Sendable {
+    public let decision: AlertDecision
+    public let additionalCount: Int
+}
+
+public enum AlertCoalescer {
+    /// One panel/notification for a batch: limit beats warning, then the
+    /// highest percentage. The remaining decisions are counted, not dropped
+    /// (their dedupe state was persisted separately).
+    public static func best(_ decisions: [AlertDecision]) -> AlertBatch? {
+        guard !decisions.isEmpty else { return nil }
+        let sorted = decisions.sorted { a, b in
+            if a.kind != b.kind { return a.kind == .limit }
+            return a.percent > b.percent
+        }
+        return AlertBatch(decision: sorted[0], additionalCount: decisions.count - 1)
+    }
 }
 
 public struct AlertState: Codable, Equatable, Sendable {
@@ -109,7 +129,8 @@ public enum AlertRules {
             windowID: window.id,
             kind: kind,
             message: message(provider: snapshot.provider, window: window, kind: kind, now: now),
-            identifier: "\(window.id).\(kind.rawValue).\(cycle)"
+            identifier: "\(window.id).\(kind.rawValue).\(cycle)",
+            percent: window.percent
         )
     }
 }

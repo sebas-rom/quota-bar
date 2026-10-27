@@ -147,6 +147,29 @@ enum DemoData {
     }
 }
 
+extension DemoData {
+    @MainActor
+    static func seedSetup(_ model: QuotaModel) {
+        let now = Date()
+        let codex = ProviderSnapshot(
+            provider: .codex,
+            windows: [
+                QuotaWindow(id: "codex.primary", kind: .primary, label: "5-hour",
+                            percent: 22, resetsAt: now.addingTimeInterval(12600), windowMinutes: 300, isLimited: false),
+                QuotaWindow(id: "codex.secondary", kind: .secondary, label: "Weekly",
+                            percent: 9, resetsAt: now.addingTimeInterval(4 * 86_400 + 6 * 3_600), windowMinutes: 10_080, isLimited: false),
+            ],
+            plan: "plus",
+            origin: .demo,
+            source: "chatgpt.com/backend-api/wham/usage",
+            observedAt: now,
+            facts: ["2 reset credits"]
+        )
+        model.ingestDemo(codex)
+        model.markDemoUnconfigured([.go, .commandCode])
+    }
+}
+
 @MainActor
 final class DemoHost {
     static let shared = DemoHost()

@@ -30,6 +30,16 @@ public enum CodexBackfill {
     }
 }
 
+// MARK: - Presentation
+
+public enum ProviderPresentation: Equatable, Sendable {
+    case checking
+    case unconfigured
+    case available
+    case degraded
+    case needsAttention
+}
+
 // MARK: - Model
 //
 // Keeps the last good snapshot per provider, writes observations to the local
@@ -177,7 +187,9 @@ public final class QuotaModel: ObservableObject {
     /// Forecast for a single window. Only 5-hour (rolling) windows are shown;
     /// everything else abstains.
     public func forecast(for provider: ProviderID, window: QuotaWindow, now: Date = Date()) -> ForecastState {
-        guard window.kind == .rolling, let store else { return .unavailable("no history") }
+        guard window.windowMinutes == 300,
+              window.kind == .rolling || window.kind == .primary,
+              let store else { return .unavailable("not a 5-hour window") }
         let samples = store.forecastSamples(
             provider: provider,
             windowID: window.id,
@@ -185,6 +197,54 @@ public final class QuotaModel: ObservableObject {
             accountRef: historyScopeRef(for: provider)
         )
         return ForecastEngine.forecast(
+            samples: samples,
+            now: now,
+            currentPercent: window.percent,
+            resetAt: window.resetsAt,
+            windowMinutes: window.windowMinutes ?? 0
+        )
+    }
+
+    /// Sliding windows report a reset that advances with time; a fixed cycle
+    /// frame would fragment their samples. Go's rolling 5h and Codex's primary
+    /// 5h window behave this way; Command Code's 5h window is fixed.
+    public func isRollingWindow(_ provider: ProviderID, _ window: QuotaWindow) -> Bool {
+        guard window.windowMinutes == 300 else { return false }
+        return (provider == .go && window.id == "go.rolling")
+            || (provider == .codex && window.id == "codex.primary")
+    }
+
+    public func trailingSamples(
+        for provider: ProviderID,
+        window: QuotaWindow,
+        hours: Double = 5,
+        now: Date = Date()
+    ) -> [SamplePoint] {
+        guard let store else { return [] }
+        let samples = store.forecastSamples(
+            provider: provider,
+            windowID: window.id,
+            since: now.addingTimeInterval(-hours * 3_600),
+            accountRef: historyScopeRef(for: provider)
+        )
+        return downsample(samples.map { SamplePoint(at: $0.at, percent: $0.percent) }, max: 400)
+    }
+
+    public func forecastProjection(
+        for provider: ProviderID,
+        window: QuotaWindow,
+        now: Date = Date()
+    ) -> ForecastProjection? {
+        guard window.windowMinutes == 300,
+              window.kind == .rolling || window.kind == .primary,
+              let store else { return nil }
+        let samples = store.forecastSamples(
+            provider: provider,
+            windowID: window.id,
+            since: now.addingTimeInterval(-ForecastEngine.lookback),
+            accountRef: historyScopeRef(for: provider)
+        )
+        return ForecastEngine.projection(
             samples: samples,
             now: now,
             currentPercent: window.percent,
@@ -424,6 +484,32 @@ public final class QuotaModel: ObservableObject {
         )
     }
 
+    public func presentation(for provider: ProviderID) -> ProviderPresentation {
+        let snapshot = snapshots[provider]
+        let health = health[provider]
+        if snapshot == nil && health == nil { return .checking }
+        if snapshot == nil, health?.state == .noCredentials { return .unconfigured }
+        if snapshot == nil { return .needsAttention }
+        if health?.state == .ok { return .available }
+        return .degraded
+    }
+
+    public var setupProviders: [ProviderID] {
+        ProviderID.allCases.filter {
+            let presentation = presentation(for: $0)
+            return presentation == .checking || presentation == .unconfigured
+        }
+    }
+
+    public var hasConfiguredProvider: Bool {
+        ProviderID.allCases.contains {
+            switch presentation(for: $0) {
+            case .available, .degraded, .needsAttention: return true
+            case .checking, .unconfigured: return false
+            }
+        }
+    }
+
     public var barText: String {
         var parts: [String] = []
         for provider in ProviderID.allCases {
@@ -516,6 +602,15 @@ public final class QuotaModel: ObservableObject {
     // MARK: demo
 
     /// Only the demo harness calls this (`--demo`), never the shipped flow.
+    /// Demo-only: mark providers as missing credentials so the setup card can be
+    /// rendered in evidence without touching real keychains.
+    public func markDemoUnconfigured(_ providers: [ProviderID]) {
+        guard isDemo else { return }
+        for provider in providers {
+            health[provider] = ProviderHealth(state: .noCredentials, attemptedAt: Date())
+        }
+    }
+
     public func ingestDemo(_ snapshot: ProviderSnapshot) {
         guard isDemo else { return }
         snapshots[snapshot.provider] = snapshot

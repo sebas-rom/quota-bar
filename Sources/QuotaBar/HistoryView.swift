@@ -56,7 +56,7 @@ struct HistoryView: View {
             .font(.caption2)
             .foregroundStyle(.secondary)
 
-            Text("Each chart covers one quota cycle, from window start to reset. Forecasts are drawn only for the current 5-hour window when recent observations are sufficient.")
+            Text("Each chart covers one quota cycle, from window start to reset. Forecasts are experimental estimates based on recent usage; they may change as your pace changes and never trigger alerts.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -213,8 +213,10 @@ struct CycleChartCard: View {
 
     @State private var cycleIndex = 0
 
+    private var rolling: Bool { model.isRollingWindow(provider, window) }
+
     private var cycles: [QuotaCycle] {
-        model.cycles(for: provider, window: window)
+        rolling ? [] : model.cycles(for: provider, window: window)
     }
 
     private var safeIndex: Int {
@@ -226,6 +228,9 @@ struct CycleChartCard: View {
     }
 
     private var points: [SamplePoint] {
+        if rolling {
+            return model.trailingSamples(for: provider, window: window, now: Date())
+        }
         guard let cycle else { return [] }
         return model.cycleSamples(for: cycle, provider: provider, window: window)
     }
@@ -251,19 +256,30 @@ struct CycleChartCard: View {
     }
 
     private var forecastState: ForecastState? {
-        guard isForecastable, let cycle, cycle.isCurrent else { return nil }
+        guard isForecastable else { return nil }
+        if rolling {
+            return model.forecast(for: provider, window: window)
+        }
+        guard let cycle, cycle.isCurrent else { return nil }
         return model.cycleForecast(for: cycle, provider: provider, window: window)
     }
 
     private var projection: ForecastProjection? {
-        guard isForecastable, let cycle, cycle.isCurrent else { return nil }
+        guard isForecastable else { return nil }
+        if rolling {
+            return model.forecastProjection(for: provider, window: window)
+        }
+        guard let cycle, cycle.isCurrent else { return nil }
         return model.cycleProjection(for: cycle, provider: provider, window: window)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             header
-            if let cycle {
+            if rolling {
+                Text(rollingSubtitle)
+                    .font(.caption2).foregroundStyle(.secondary)
+            } else if let cycle {
                 Text(cycleSubtitle(cycle))
                     .font(.caption2).foregroundStyle(.secondary)
             }
@@ -288,7 +304,7 @@ struct CycleChartCard: View {
     private var header: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
             Text(window.label).font(.subheadline.weight(.medium))
-            if cycles.count > 1 {
+            if !rolling, cycles.count > 1 {
                 if isSnapshot {
                     Image(systemName: "chevron.left").foregroundStyle(.secondary)
                     Image(systemName: "chevron.right").foregroundStyle(.secondary)
@@ -401,8 +417,11 @@ struct CycleChartCard: View {
 
     @ViewBuilder
     private var footerNotes: some View {
-        if let cycle {
-            if let first = points.first, first.at.timeIntervalSince(cycle.start) > 3600 {
+        if !points.isEmpty {
+            let frameStart = rolling
+                ? Date().addingTimeInterval(-5 * 3_600)
+                : (cycle?.start ?? Date())
+            if let first = points.first, first.at.timeIntervalSince(frameStart) > 3600 {
                 Text("History starts \(first.at.formatted(.dateTime.month(.abbreviated).day()))")
                     .font(.caption2).foregroundStyle(.tertiary)
             }
@@ -417,6 +436,10 @@ struct CycleChartCard: View {
     }
 
     private var xDomain: ClosedRange<Date> {
+        if rolling {
+            let now = Date()
+            return now.addingTimeInterval(-5 * 3_600)...now.addingTimeInterval(2 * 3_600)
+        }
         guard let cycle else { return Date()...Date().addingTimeInterval(1) }
         return cycle.start...cycle.end
     }
@@ -444,19 +467,29 @@ struct CycleChartCard: View {
     }
 
     private var tickDates: [Date] {
-        guard let cycle else { return [] }
-        let span = cycle.end.timeIntervalSince(cycle.start)
-        let fractions: [Double] = span <= 6 * 3600
+        let start = xDomain.lowerBound
+        let end = xDomain.upperBound
+        let span = end.timeIntervalSince(start)
+        let fractions: [Double] = span <= 8 * 3_600
             ? [0.0, 0.5, 1.0]
             : [0.0, 1.0 / 3.0, 2.0 / 3.0, 1.0]
-        return fractions.map { cycle.start.addingTimeInterval(span * $0) }
+        return fractions.map { start.addingTimeInterval(span * $0) }
     }
 
     private var tickFormat: Date.FormatStyle {
-        guard let cycle else { return .dateTime.month(.abbreviated).day() }
-        let span = cycle.end.timeIntervalSince(cycle.start)
-        if span <= 6 * 3600 { return .dateTime.hour().minute() }
+        let span = xDomain.upperBound.timeIntervalSince(xDomain.lowerBound)
+        if span <= 8 * 3_600 { return .dateTime.hour().minute() }
         return .dateTime.month(.abbreviated).day()
+    }
+
+    private var rollingSubtitle: String {
+        var text = "Rolling 5-hour window"
+        if let reset = window.resetsAt, reset > Date(), let value = resetText(until: reset) {
+            text += " · \(value.prefix(1).uppercased() + value.dropFirst())"
+        } else {
+            text += " · awaiting refresh"
+        }
+        return text
     }
 
     private func cycleSubtitle(_ cycle: QuotaCycle) -> String {
@@ -491,7 +524,9 @@ struct CycleChartCard: View {
     private var accessibilitySummary: String {
         var bits = ["\(provider.displayName), \(window.label) quota"]
         bits.append("\(Int(displayPercent.rounded())) percent used")
-        if let cycle {
+        if rolling {
+            bits.append(rollingSubtitle)
+        } else if let cycle {
             bits.append(cycleSubtitle(cycle))
         }
         if let statusText { bits.append(statusText) }

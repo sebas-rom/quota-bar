@@ -351,6 +351,36 @@ public final class TelemetryStore: @unchecked Sendable {
         } ?? []
     }
 
+    /// Every network observation for a window, oldest first. Used by the
+    /// read-only replay; no account filter (replay is a local diagnostic).
+    public func networkSamples(provider: ProviderID, windowID: String, since: Date) -> [ForecastSample] {
+        withLock { db in
+            let sql = """
+            SELECT observed_at, percent, resets_at, origin FROM sample
+            WHERE provider = ? AND window_id = ? AND observed_at >= ? AND origin = 'network'
+            ORDER BY observed_at ASC LIMIT 20000
+            """
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return [] }
+            defer { sqlite3_finalize(stmt) }
+            bind(stmt, 1, provider.rawValue)
+            bind(stmt, 2, windowID)
+            sqlite3_bind_double(stmt, 3, since.timeIntervalSince1970)
+            var out: [ForecastSample] = []
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                let reset: Date? = sqlite3_column_type(stmt, 2) == SQLITE_NULL
+                    ? nil : Date(timeIntervalSince1970: sqlite3_column_double(stmt, 2))
+                out.append(ForecastSample(
+                    at: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 0)),
+                    percent: sqlite3_column_double(stmt, 1),
+                    resetsAt: reset,
+                    origin: .network
+                ))
+            }
+            return out
+        } ?? []
+    }
+
     /// Raw network observations for forecasting. Never mixes origins, and
     /// honours the account scope used by the charts.
     public func forecastSamples(

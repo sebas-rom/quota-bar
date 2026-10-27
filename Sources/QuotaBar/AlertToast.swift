@@ -28,7 +28,12 @@ final class AlertToast {
         position(panel)
 
         panel.orderFrontRegardless()
-        panel.animator().alphaValue = 1
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            panel.alphaValue = 1
+        } else {
+            panel.alphaValue = 0
+            panel.animator().alphaValue = 1
+        }
 
         hideWork?.cancel()
         let work = DispatchWorkItem { [weak self] in self?.hide() }
@@ -60,10 +65,13 @@ final class AlertToast {
     }
 
     private func position(_ panel: NSPanel) {
-        guard let screen = NSScreen.main else { return }
+        let mouse = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
+        guard let screen else { return }
+        let visible = screen.visibleFrame
         let size = panel.frame.size
-        let x = screen.visibleFrame.maxX - size.width - 12
-        let y = screen.visibleFrame.maxY - size.height - 10
+        let x = min(max(visible.minX + 12, visible.maxX - size.width - 12), visible.maxX - size.width - 12)
+        let y = min(max(visible.minY + 12, visible.maxY - size.height - 10), visible.maxY - size.height - 10)
         panel.setFrameOrigin(NSPoint(x: x, y: y))
     }
 }
@@ -87,6 +95,13 @@ private struct ToastView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
+            Button(action: onClose) {
+                Image(systemName: "xmark")
+                    .font(.caption2)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .accessibilityLabel("Dismiss alert")
         }
         .padding(12)
         .frame(width: 340, alignment: .leading)
