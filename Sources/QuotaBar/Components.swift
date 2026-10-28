@@ -3,7 +3,7 @@ import QuotaBarKit
 
 // MARK: - Shared presentation components
 //
-// Cards, meters and sparklines render any provider from normalized snapshots.
+// Cards and meters render any provider from normalized snapshots.
 // No provider-specific branches live here, so a third provider needs no UI work.
 
 enum Layout {
@@ -41,41 +41,19 @@ private func eligibilityWord(_ eligibility: Eligibility) -> String {
 
 struct AdvisorRow: View {
     let advice: Advice
-    let taskMinutes: Int
-    var onSettings: () -> Void = {}
-
-    private var symbol: String {
-        switch advice.recommendation.status {
-        case .ok: return "checkmark.circle.fill"
-        case .conditional: return "questionmark.circle.fill"
-        case .unknown: return "questionmark.circle"
-        }
-    }
-
-    private var symbolColor: Color {
-        switch advice.recommendation.status {
-        case .ok: return .green
-        case .conditional: return .orange
-        case .unknown: return .secondary
-        }
-    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 5) {
-                Image(systemName: symbol)
-                    .font(.caption2)
-                    .foregroundStyle(symbolColor)
-                    .accessibilityHidden(true)
-                Text("Next task · \(taskMinutes) min")
+                // No leading icon: a question mark would say "uncertain
+                // readings", while the row only means "no single winner".
+                // Eligibility is a provider-scope decision: it does not
+                // depend on the task length, so the row must not imply that it
+                // does. Duration only affects the 5-hour forecast caption.
+                Text("Quota availability")
                     .font(.caption)
                     .fontWeight(.medium)
                 Spacer(minLength: 4)
-                Button("Settings…", action: onSettings)
-                    .font(.caption2)
-                    .buttonStyle(.plain)
-                    .foregroundStyle(Color.accentColor)
-                    .accessibilityLabel("Open advice settings")
             }
             Text(advice.recommendation.summary)
                 .font(.caption2)
@@ -214,90 +192,60 @@ struct Card<Content: View>: View {
     @ViewBuilder let content: Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Layout.rowSpacing) {
-            HStack(spacing: 6) {
-                Circle().fill(dotColor(dot)).frame(width: 8, height: 8)
-                    .accessibilityHidden(true)
-                Text(title).font(.headline)
-                Spacer()
-                if isExpandable, let onToggleExpanded {
-                    Button(action: onToggleExpanded) {
-                        Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                            .font(.caption2)
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-                    .help(isExpanded ? "Show fewer windows" : "Show all quota windows")
+        VStack(alignment: .leading, spacing: 0) {
+            if isExpandable, let onToggleExpanded {
+                // The whole header is the target: an 11pt chevron glyph is not
+                // a clickable control for a human. The chevron stays as the
+                // affordance, at the trailing edge after the plan.
+                Button(action: onToggleExpanded) {
+                    header(showsChevron: true)
+                        // Inside the label: the whole 32pt row, edge to edge,
+                        // is the button's own hit area.
+                        .frame(minHeight: 32)
+                        .contentShape(Rectangle())
                 }
-                if let subtitle {
-                    Text(subtitle).font(.caption).foregroundStyle(.secondary)
-                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(subtitle.map { "\(title), \($0)" } ?? title)
+                .accessibilityValue(isExpanded ? "Expanded" : "Collapsed")
+                .accessibilityHint(isExpanded ? "Show only the most-used window" : "Show all quota windows")
+                .help(isExpanded ? "Show fewer windows" : "Show all quota windows")
+                .padding(.bottom, 4)
+            } else {
+                header(showsChevron: false)
+                    .accessibilityElement(children: .combine)
+                    .padding(.bottom, Layout.rowSpacing)
             }
-            .accessibilityElement(children: .combine)
-            content
+            VStack(alignment: .leading, spacing: Layout.rowSpacing) {
+                content
+            }
         }
         .padding(Layout.card)
         .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
     }
-}
 
-/// 24h (or any range) mini chart. Y is pinned to 0–100 so a 2% window never
-/// looks as dramatic as a 90% one.
-struct Sparkline: View {
-    let points: [SamplePoint]
-    let color: Color
-    /// Optional cycle frame. When provided, x runs from cycle start to reset,
-    /// so a partial history starts where data actually begins.
-    var start: Date? = nil
-    var end: Date? = nil
-
-    var body: some View {
-        GeometryReader { geo in
-            let size = geo.size
-            if points.count >= 2, size.width > 4, size.height > 2 {
-                let coords = normalized(in: size)
-                ZStack {
-                    Path { path in
-                        path.addLines(coords)
-                    }
-                    .stroke(color.opacity(0.9), style: StrokeStyle(lineWidth: 1.5, lineCap: .round, lineJoin: .round))
-
-                    Path { path in
-                        path.move(to: CGPoint(x: 0, y: size.height))
-                        path.addLines(coords)
-                        path.addLine(to: CGPoint(x: size.width, y: size.height))
-                        path.closeSubpath()
-                    }
-                    .fill(LinearGradient(
-                        colors: [color.opacity(0.22), color.opacity(0.02)],
-                        startPoint: .top, endPoint: .bottom
-                    ))
-                }
-                .clipped()
+    private func header(showsChevron: Bool) -> some View {
+        HStack(spacing: 6) {
+            Circle().fill(dotColor(dot)).frame(width: 8, height: 8)
+                .accessibilityHidden(true)
+            Text(title).font(.headline)
+            Spacer(minLength: 6)
+            if let subtitle {
+                Text(subtitle).font(.caption).foregroundStyle(.secondary)
+            }
+            if showsChevron {
+                Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 14)
+                    .accessibilityHidden(true)
             } else {
-                Path { path in
-                    path.move(to: CGPoint(x: 0, y: size.height - 0.5))
-                    path.addLine(to: CGPoint(x: size.width, y: size.height - 0.5))
-                }
-                .stroke(Color.secondary.opacity(0.25), style: StrokeStyle(lineWidth: 1, dash: [2, 3]))
+                // Reserve the same trailing slot so plan labels line up whether
+                // or not the card has a disclosure control.
+                Color.clear.frame(width: 14).accessibilityHidden(true)
             }
         }
-        .frame(height: 22)
-        .accessibilityHidden(true)
-    }
-
-    private func normalized(in size: CGSize) -> [CGPoint] {
-        let sorted = points.sorted { $0.at < $1.at }
-        let t0 = start ?? sorted.first?.at ?? Date()
-        let t1 = end ?? sorted.last?.at ?? Date()
-        let span = max(1, t1.timeIntervalSince(t0))
-        return sorted.map { point in
-            let rawX = t1 == t0 ? size.width : CGFloat(point.at.timeIntervalSince(t0) / span) * size.width
-            let x = min(max(rawX, 0), size.width)
-            let clamped = min(max(point.percent, 0), 100)
-            let y = size.height - CGFloat(clamped / 100) * size.height
-            return CGPoint(x: x, y: y)
-        }
+        .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())
     }
 }
 

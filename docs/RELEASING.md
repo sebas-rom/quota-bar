@@ -5,7 +5,7 @@ Two channels share one Sparkle appcast:
 | Channel | Trigger | Release | Notes |
 |---|---|---|---|
 | Stable | tag `v*` | permanent tag | advertised to everyone |
-| Nightly | push to `main` | `nightly` prerelease | opt-in via ⋯ → Update channel |
+| Nightly | push to `main` | `nightly` prerelease | opt-in via Settings → General → Channel |
 
 ## What CI does
 

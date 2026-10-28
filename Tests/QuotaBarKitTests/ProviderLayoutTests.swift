@@ -132,55 +132,6 @@ final class MenuBarCompositionTests: XCTestCase {
     }
 }
 
-final class TrendCoverageTests: XCTestCase {    private let now = Date(timeIntervalSince1970: 1_790_000_000)
-
-    private func points(spanning seconds: TimeInterval) -> [SamplePoint] {
-        [
-            SamplePoint(at: now.addingTimeInterval(-seconds), percent: 10),
-            SamplePoint(at: now, percent: 11),
-        ]
-    }
-
-    func testTwoPointsMinutesApartAreNotAMonthlyTrend() {
-        let start = now.addingTimeInterval(-30 * 86_400)
-        XCTAssertFalse(TrendCoverage.isMeaningful(
-            points: points(spanning: 300),
-            frameStart: start,
-            frameEnd: now
-        ))
-    }
-
-    func testCoverageOverTheThresholdIsMeaningful() {
-        let start = now.addingTimeInterval(-30 * 86_400)
-        let span = 30 * 86_400 * TrendCoverage.minimumFrameFraction + 60
-        XCTAssertTrue(TrendCoverage.isMeaningful(
-            points: points(spanning: span),
-            frameStart: start,
-            frameEnd: now
-        ))
-    }
-
-    func testFiveHourFrameNeedsMoreThanFiveMinutes() {
-        let start = now.addingTimeInterval(-5 * 3_600)
-        XCTAssertFalse(TrendCoverage.isMeaningful(
-            points: points(spanning: 300), frameStart: start, frameEnd: now
-        ))
-        XCTAssertTrue(TrendCoverage.isMeaningful(
-            points: points(spanning: 20 * 60), frameStart: start, frameEnd: now
-        ))
-    }
-
-    func testDegenerateFramesAndSinglePointsAreRejected() {
-        XCTAssertFalse(TrendCoverage.isMeaningful(points: [], frameStart: now, frameEnd: now))
-        XCTAssertFalse(TrendCoverage.isMeaningful(
-            points: [SamplePoint(at: now, percent: 10)], frameStart: now.addingTimeInterval(-3_600), frameEnd: now
-        ))
-        XCTAssertFalse(TrendCoverage.isMeaningful(
-            points: points(spanning: 60), frameStart: now, frameEnd: now
-        ))
-    }
-}
-
 final class AttentionBannerTests: XCTestCase {
     func testHiddenProviderWarnsOnlyWhileItsAlertsAreEnabled() {
         XCTAssertTrue(AttentionBanner.shouldShow(

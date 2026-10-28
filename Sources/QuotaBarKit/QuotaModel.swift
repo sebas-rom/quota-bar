@@ -464,14 +464,6 @@ public final class QuotaModel: ObservableObject {
         )
     }
 
-    /// Sparkline data for a card: the current cycle of the given window.
-    public func cycleTrend(for provider: ProviderID, window: QuotaWindow) -> (points: [SamplePoint], cycle: QuotaCycle)? {
-        guard let cycle = currentCycle(for: provider, window: window) else { return nil }
-        let points = cycleSamples(for: cycle, provider: provider, window: window)
-        guard points.count >= 2 else { return nil }
-        return (points, cycle)
-    }
-
     public func historyWindowIDs(provider: ProviderID) -> [String] {
         store?.observedWindowIDs(provider: provider) ?? []
     }

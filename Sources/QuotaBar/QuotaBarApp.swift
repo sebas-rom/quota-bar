@@ -5,10 +5,10 @@ import QuotaBarKit
 // QuotaBar v0.4 — remembers what it sees.
 //
 // Menu bar: two percentages (unchanged).
-// Popover: current windows, 24h trend, provenance and freshness.
+// Popover: current windows, freshness, and an optional availability row.
 // History: a real window with range charts over the local observation store.
 
-private let appVersion = "0.12.0"
+private let appVersion = "0.12.1"
 
 @MainActor
 enum AppEnvironment {
@@ -245,28 +245,6 @@ struct PopoverView: View {
         return show ? headsUp : nil
     }
 
-    private struct CardTrend {
-        let points: [SamplePoint]
-        let start: Date
-        let end: Date
-    }
-
-    /// Trend for the window the card actually displays, never for a different
-    /// window on the same provider.
-    private func trend(for provider: ProviderID, window: QuotaWindow, now: Date = Date()) -> CardTrend? {
-        if model.isRollingWindow(provider, window) {
-            let start = now.addingTimeInterval(-5 * 3_600)
-            let points = model.trailingSamples(for: provider, window: window, now: now)
-            guard TrendCoverage.isMeaningful(points: points, frameStart: start, frameEnd: now) else { return nil }
-            return CardTrend(points: points, start: start, end: now)
-        }
-        guard let cycle = model.cycleTrend(for: provider, window: window),
-              TrendCoverage.isMeaningful(points: cycle.points, frameStart: cycle.cycle.start, frameEnd: cycle.cycle.end) else {
-            return nil
-        }
-        return CardTrend(points: cycle.points, start: cycle.cycle.start, end: cycle.cycle.end)
-    }
-
     private var needsScroll: Bool {
         visibleProviders.count + setupProviders.count > 3
     }
@@ -336,22 +314,14 @@ struct PopoverView: View {
             // be "checking" or showing a local-log fallback while the row shows
             // last launch's decision. Wait for the whole pass.
             if showAdvisor, model.hasFullRefresh {
-                AdvisorRow(
-                    advice: model.advice(taskMinutes: taskMinutes),
-                    taskMinutes: taskMinutes,
-                    onSettings: openSettings
-                )
+                AdvisorRow(advice: model.advice(taskMinutes: taskMinutes))
             }
             ForEach(visibleProviders, id: \.self) { provider in
                 let snapshot = model.snapshots[provider]
-                let cardTrend = snapshot?.limiting.flatMap { trend(for: provider, window: $0) }
                 ProviderCard(
                     provider: provider,
                     snapshot: snapshot,
                     health: model.health[provider],
-                    trend: cardTrend?.points ?? [],
-                    trendStart: cardTrend?.start,
-                    trendEnd: cardTrend?.end,
                     freshness: model.staleness(for: provider),
                     onRecovery: recoveryAction(for: provider),
                     recoveryTitle: recoveryTitle(for: provider),
@@ -439,6 +409,8 @@ struct PopoverView: View {
             } label: {
                 Label(model.refreshing ? "Refreshing" : "Refresh", systemImage: "arrow.clockwise")
                     .labelStyle(.iconOnly)
+                    .frame(width: 28, height: 28)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .keyboardShortcut("r")
@@ -446,7 +418,7 @@ struct PopoverView: View {
             .help(model.refreshing ? "Refreshing…" : "Refresh now (⌘R)")
             .accessibilityLabel(model.refreshing ? "Refreshing" : "Refresh")
 
-            Button("History…") {
+            Button("History") {
                 HistoryWindowController.shared.show(model: model, layout: layout)
             }
             .disabled(model.store == nil)
@@ -458,15 +430,18 @@ struct PopoverView: View {
             } label: {
                 Label("Settings", systemImage: "gearshape")
                     .labelStyle(.iconOnly)
+                    .frame(width: 28, height: 28)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help("Settings…")
+            .keyboardShortcut(",", modifiers: .command)
+            .help("Settings… (⌘,)")
             .accessibilityLabel("Settings")
 
             if showsPresentation {
             Menu {
-                Button("Settings…") { openSettings() }
-                    .keyboardShortcut(",", modifiers: .command)
+                Button("Check for Updates…") { updates.checkForUpdates() }
+                    .keyboardShortcut("u", modifiers: .command)
                 Divider()
                 Button("Show Credential Files") {
                     NSWorkspace.shared.open(homeDir().appendingPathComponent(".local/share/opencode"))
@@ -484,8 +459,11 @@ struct PopoverView: View {
                     .keyboardShortcut("q")
             } label: {
                 Label("More", systemImage: "ellipsis.circle")
+                    .frame(width: 28, height: 28)
+                    .contentShape(Rectangle())
             }
             .menuStyle(.borderlessButton)
+            .help("More actions")
             .accessibilityLabel("More actions")
             } else {
                 Image(systemName: "ellipsis.circle")
@@ -591,9 +569,6 @@ struct ProviderCard: View {
     let provider: ProviderID
     let snapshot: ProviderSnapshot?
     let health: ProviderHealth?
-    let trend: [SamplePoint]
-    var trendStart: Date? = nil
-    var trendEnd: Date? = nil
     let freshness: String?
     var onRecovery: (() -> Void)? = nil
     var recoveryTitle: String? = nil
@@ -622,20 +597,6 @@ struct ProviderCard: View {
                         isLimiting: window.id == snapshot.limiting?.id,
                         forecast: forecastFor(window)
                     )
-                }
-                // The chart belongs to the one window the compact card shows.
-                // Expanded cards list every window, so a single unlabeled
-                // chart would be ambiguous; History owns that view.
-                if compact, !isExpanded, trend.count >= 2, let window = snapshot.limiting {
-                    Sparkline(
-                        points: trend,
-                        color: dotColor(usageColorName(for: window.percent)),
-                        start: trendStart,
-                        end: trendEnd
-                    )
-                    .padding(.top, 2)
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("\(provider.displayName) \(window.label) trend")
                 }
                 if !statusBits.isEmpty {
                     StatusLine(text: statusBits.joined(separator: " · "), degraded: degraded)
@@ -806,12 +767,14 @@ struct SetupCard: View {
         VStack(alignment: .leading, spacing: 8) {
             Text(hasConfigured ? "Connect another provider" : "Get started with QuotaBar")
                 .font(.subheadline.weight(.semibold))
-            Text(hasConfigured
-                 ? "Add another service whenever you need it."
-                 : "QuotaBar reads usage locally and never sends it to another server.")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            // Once a provider is configured the heading is self-explanatory;
+            // the extra sentence was filler above the actual actions.
+            if !hasConfigured {
+                Text("Checks quotas using credentials already on this Mac. History stays local.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             ForEach(providers, id: \.self) { provider in
                 HStack(spacing: 8) {

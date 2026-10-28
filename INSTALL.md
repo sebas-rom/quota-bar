@@ -80,7 +80,8 @@ Agent rules:
 
 ## Setup
 
-- **opencode-go**: ⋯ → **Enter API key…**, paste an opencode Personal API key. It
+- **opencode-go**: the setup card's **Enter key…** (or the same action on a failing
+  Go card), paste an opencode Personal API key. It
   is validated against `/usage`, stored in Keychain, and mirrored to
   `~/.config/quota-bar/opencode-go.json` (mode 0600) so updates do not re-prompt.
 - **Codex**: sign in with the Codex CLI so `~/.codex/auth.json` exists.

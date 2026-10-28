@@ -276,6 +276,9 @@ public enum CommandCode {
                              subscription: CommandCodeSubscription?,
                              now: Date = Date()) -> [String] {
         var facts = [creditsFact(credits, planId: subscription?.planId)]
+        // The renewal line stays model-level: a compact card may hide the
+        // monthly window that carries the same date, so suppressing it here
+        // would remove the only visible date in the default view.
         if let subscription, let renewal = renewalFact(subscription, now: now) {
             facts.append(renewal)
         }

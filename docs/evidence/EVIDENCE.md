@@ -11,12 +11,14 @@ Command:
 
 | File | View | Size (pt) |
 |---|---|---|
-| `popover-light.png` | `PopoverView` (compact cards) | 320 × 504 |
-| `popover-dark.png` | same, dark appearance | 320 × 504 |
-| `popover-all-windows.png` | `PopoverView` with compact cards off (every window) | 320 × 696 |
-| `popover-network.png` | compact cards, network-origin snapshots | 320 × 504 |
-| `popover-hidden.png` | compact cards, Command Code hidden | 320 × 368 |
-| `popover-setup.png` | setup rows with one configured provider | 320 × 346 |
+| `popover-light.png` | `PopoverView` (compact cards) | 320 × 470 |
+| `popover-dark.png` | same, dark appearance | 320 × 470 |
+| `popover-all-windows.png` | `PopoverView` with compact cards off (every window) | 320 × 700 |
+| `popover-network.png` | compact cards, network-origin snapshots | 320 × 470 |
+| `popover-hidden.png` | compact cards, Command Code hidden | 320 × 358 |
+| `popover-setup.png` | setup rows with one configured provider | 320 × 339 |
+| `popover-advisor.png` | compact cards with the "Quota availability" row | 320 × 549 |
+| `popover-advisor-dark.png` | same, dark appearance | 320 × 549 |
 | `history-light.png` | `HistoryView` (cycle-first History content) | 620 × 1461 |
 | `history-dark.png` | same, dark appearance | 620 × 1461 |
 | `menubar-icon.png` | menu-bar template icon (6×) | 108 × 108 |
@@ -71,8 +73,12 @@ the narrowest supported presentation; the History window has a 520 pt minimum.
 - The menu-bar mark is two meter bars, rendered once at 4× and downsized to 18pt
   (a letter monogram read as a search glyph at menu-bar size; the first attempt
   also double-scaled into a clipped blob).
-- Compact cards show the limiting window per provider with a disclosure chevron;
-  full windows are available on demand and in History.
+- Compact cards show the limiting window per provider; the whole card header is
+  the disclosure button (chevron trailing after the plan), and every window is
+  available on demand and in History.
+- The popover draws no charts as of 0.12.1: the 22pt mini-trend had no period or
+  scale and only appeared when a window had enough samples, so card heights
+  varied without the line explaining itself. History owns charts.
 - Unconfigured providers collapse into one setup card; the setup capture shows a
   Codex-only install.
 - Rolling 5-hour windows use a trailing frame; fixed windows keep cycle charts.

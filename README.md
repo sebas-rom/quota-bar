@@ -12,10 +12,30 @@ keychain scraping.
 
 Menu shows e.g. `Go 74% · Cx 22% · CC 11%`, or just the worst provider, or the
 icon alone. Click for provider cards with the most-used window, its reset
-countdown and a sparkline for that same window. Order and visibility live in
+countdown. Trend charts live in **History**. Order and visibility live in
 **Settings** (⌘, / gear in the popover), not in a hidden defaults key.
 
 ![Popover](docs/evidence/popover-light.png)
+
+## What's new in 0.12.1 — controls you can hit and find
+
+- **Updates are findable again.** *Check for Updates…* is back in the ⋯ menu
+  (⌘U); Settings → General keeps automatic checks, the channel and **Check Now**.
+  *Settings…* now lives on the gear only (⌘,), instead of twice in one panel.
+- **The whole card header expands the card.** The disclosure target used to be
+  an 11pt chevron; now the full header row is the button, with Return/Space and a
+  VoiceOver value of “Expanded”/“Collapsed”. Non-compact cards stay static.
+- **The availability row says what it is.** “Next task · 60 min” became
+  **Quota availability**: eligibility never depended on the task length, which
+  only affects the 5-hour forecast caption. The row’s duplicate Settings… link
+  is gone; Settings lives on the footer gear.
+- **Less filler.** The setup card no longer explains itself above the actions
+  once a provider is configured, the footer says **History** (it opens a window,
+  it does not ask anything), and refresh, gear and ⋯ have real 28pt targets.
+- **The popover is a quota panel again, not a chart.** The 22pt mini-trend had no
+  period, scale or label and only appeared for some windows, so cards differed
+  in height without telling anyone what the line meant. Charts live in History,
+  where they have axes, a frame and a forecast.
 
 ## What's new in 0.12 — advice, better sources, local Codex reads
 
@@ -79,7 +99,8 @@ Evidence: [advice row](docs/evidence/popover-advisor.png).
   is already on a card, healthy cards no longer print `live · via <endpoint>`,
   and resets read `3h 29m left` instead of a sentence.
 - **Settings, not a catch-all menu.** Launch at login, compact cards, alerts and
-  provider toggles, updates and the new provider layout moved out of the ⋯ menu;
+  provider toggles, updates and the new provider layout moved out of the ⋯ menu
+  (0.12.1 restores the quick update check there, not the configuration);
   it keeps credentials, history deletion, About and Quit.
 
 Evidence: [popover light](docs/evidence/popover-light.png) ·
@@ -129,8 +150,8 @@ accepted trade-off: [docs/DECISIONS.md](docs/DECISIONS.md).
 ## What's new in 0.8.1 — compact cards
 
 Three providers no longer need a tall popover. Each card shows the most limiting
-window, its reset, and the current 5-hour-cycle sparkline; a small chevron
-expands every window. Toggle **Compact cards** in Settings → General. History still
+window and its reset; the header expands every window. (0.8.1 also drew a
+sparkline; 0.12.1 removed it from the popover — History owns charts.) Toggle **Compact cards** in Settings → General. History still
 carries the full cycle view and forecast.
 
 ## What's new in 0.8 — a trustworthy download
@@ -273,9 +294,9 @@ Releases are delivered with **Sparkle 2** from one appcast, split into channels:
 - **Nightly** — every build from `main`, offered only if you switch channel in
   **Settings → General** (*Channel → Nightly*).
 
-**Check Now** lives in **Settings → General**; automatic checks are on by default
-(daily) and can be turned off there. There is deliberately no ⋯ menu item: the
-menu keeps credentials, history deletion, About and Quit. Update archives are signed with EdDSA and
+**Check for Updates… (⌘U)** lives in the ⋯ menu for a quick check;
+**Settings → General** is where automatic checks, the channel and **Check Now**
+live. The menu otherwise keeps credentials, history deletion, About and Quit. Update archives are signed with EdDSA and
 verified against the public key embedded in the app. The app itself is not
 notarized yet, so Gatekeeper still applies to the first manual install.
 
@@ -308,7 +329,7 @@ make zip            # -> QuotaBar.zip (shareable)
 ```
 
 Auto-refresh every 5 min, on wake, and on popover open + `R`. VoiceOver labels on
-every quota row and chart. Notifications are opt-in (`⋯ → Quota alerts`).
+every quota row and chart. Notifications are opt-in (`Settings → Alerts`).
 
 ## Limits
 

@@ -1,5 +1,47 @@
 # Decisions
 
+## 2026-10-28 — 0.12.1: reachable controls, honest labels, fewer decorations
+
+**Status:** accepted.
+
+**Context.** Two everyday complaints exposed a navigation and interaction problem
+rather than a styling one: the manual update check had moved into Settings while
+the documentation still pointed at the ⋯ menu, and the card's disclosure control
+was an 11pt chevron glyph. A UX review of the whole popover also found a claim
+it did not support (the advice row's "Next task · 60 min" implied that
+eligibility depended on task length) and duplicated affordances.
+
+**Decision.** Restore *Check for Updates…* as the first ⋯ item (⌘U) and keep
+Settings → General for configuration; remove the duplicate Settings… item and
+move ⌘, to the gear. Make the entire card header the disclosure button (32pt,
+chevron trailing after the plan, one VoiceOver button with an Expanded/Collapsed
+value); reserve the chevron slot on non-expandable headers so plan labels align.
+Rename the advice row to *Quota availability*, drop the task length from its
+header (duration only affects the 5-hour forecast caption) and remove its
+Settings… link. Drop the setup card's filler sentence once a provider is
+configured. Give the footer icon controls 28pt targets, and call the History
+button what it is.
+
+The popover sparkline is removed. It had no period, scale or label, appeared only
+for windows with enough samples (so card heights varied), and answered a question
+History answers properly. `TrendCoverage` and `QuotaModel.cycleTrend` went with
+it rather than staying as unused "in case" code. History keeps every chart.
+
+Command Code's "Renews <date>" fact stays model-level. Suppressing it whenever a
+monthly window exists was tried and reverted: a compact card shows only the
+limiting window, so the monthly row (and with it the only visible renewal date)
+can be hidden. A repeated date in the expanded view is preferable to a missing
+date in the default one; a presentation-aware rule would be the only correct
+version of the suppression.
+
+**Consequences.**
+
+- Two paths to update for two intents, one path to Settings.
+- Disclosure works with a pointer, Return/Space and VoiceOver; no tiny target.
+- The availability row can no longer be read as a duration-aware recommendation;
+  `--advise-json` is untouched.
+- Cards are shorter and consistent; the popover is a status surface.
+
 ## 2026-10-28 — Advice fails closed, and untrusted diagnostics stay out
 
 **Status:** accepted.

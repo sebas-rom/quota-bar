@@ -177,26 +177,6 @@ public enum MenuBarComposition {
     }
 }
 
-// MARK: - Trend coverage
-
-public enum TrendCoverage {
-    /// A trend is only meaningful when its samples span a real share of the
-    /// frame it claims to describe. Two points five minutes apart inside a
-    /// monthly cycle are not a monthly trend.
-    public static let minimumFrameFraction: Double = 0.05
-
-    public static func isMeaningful(
-        points: [SamplePoint],
-        frameStart: Date,
-        frameEnd: Date
-    ) -> Bool {
-        guard points.count >= 2, frameEnd > frameStart else { return false }
-        let span = (points.map(\.at).max() ?? frameEnd).timeIntervalSince(points.map(\.at).min() ?? frameStart)
-        guard span > 0 else { return false }
-        return span >= frameEnd.timeIntervalSince(frameStart) * minimumFrameFraction
-    }
-}
-
 // MARK: - Attention banner rule
 
 public enum AttentionBanner {

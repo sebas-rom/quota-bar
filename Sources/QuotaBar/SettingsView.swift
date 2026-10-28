@@ -213,9 +213,9 @@ struct SettingsView: View {
 
                 Divider()
 
-                Toggle("Next-task advice", isOn: $advisorEnabled)
+                Toggle("Show quota availability", isOn: $advisorEnabled)
                 HStack {
-                    Picker("Task length", selection: $advisorTaskMinutes) {
+                    Picker("Forecast task length", selection: $advisorTaskMinutes) {
                         Text("25 min").tag(25)
                         Text("1 hour").tag(60)
                         Text("3 hours").tag(180)
@@ -224,7 +224,7 @@ struct SettingsView: View {
                     .disabled(!advisorEnabled)
                     Spacer()
                 }
-                Text("Adds one row to the popover: which provider has headroom for a task of that length. It compares headroom only — providers report different units, so there is no ranking or confidence score, and it stays silent when a reading is stale or unknown.")
+                Text("Shows which providers currently have quota. Task length only affects the supported 5-hour forecast captions; the availability row itself is provider-level, with no ranking or confidence score, and unknown or stale readings are identified rather than treated as available quota.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

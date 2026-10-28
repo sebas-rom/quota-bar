@@ -3,9 +3,11 @@
 QuotaBar can answer one narrow question above the cards: **which provider still
 has quota for the task I am about to start?**
 
-It is off by default. Turn it on in **Settings → General → Next-task advice** and
-pick a task length (25 minutes, 1 hour, 3 hours). The same decision is available
-to scripts and agents through `qbar --advise-json`.
+It is off by default. Turn it on in **Settings → General → Show quota
+availability**. The **Forecast task length** picker next to it (25 minutes,
+1 hour, 3 hours) only affects the 5-hour forecast captions — eligibility itself
+is provider-scope and does not depend on the task. The same decision is
+available to scripts and agents through `qbar --advise-json`.
 
 The feature exists because three providers now share one menu bar: when one is
 out, "which one do I use?" is a real question. What it deliberately does **not**
@@ -196,8 +198,8 @@ it never fires when the forecast itself is an abstention.
 
 | Preference | Default | Effect |
 |---|---|---|
-| `AdvisorEnabled` | `false` | Adds the popover row and the task-aware caption. |
-| `AdvisorTaskMinutes` | `60` | Task length used by that caption (25/60/180). |
+| `AdvisorEnabled` | `false` | Adds the "Quota availability" popover row and the task-aware caption. |
+| `AdvisorTaskMinutes` | `60` | Task length used by that caption (25/60/180); it does not change eligibility. |
 
 Advice is a presentation and CLI feature: hiding a provider in Settings still
 lets it be recommended, because advice describes quota, not layout.
