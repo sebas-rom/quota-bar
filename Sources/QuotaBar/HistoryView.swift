@@ -270,7 +270,7 @@ struct CycleChartCard: View {
     }
 
     private var isForecastable: Bool {
-        window.windowMinutes == 300 && (window.kind == .rolling || window.kind == .primary)
+        WindowSemantics.isForecastable(window: window)
     }
 
     private var forecastState: ForecastState? {

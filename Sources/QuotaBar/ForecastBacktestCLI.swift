@@ -61,7 +61,9 @@ enum ForecastBacktestCLI {
     }
 
     private static func emitError(_ message: String) -> Never {
-        let payload: [String: Any] = ["schema_version": 1, "error": message]
+        // Same envelope key as the report: one decoder handles success and
+        // failure instead of special-casing `schema_version` on errors only.
+        let payload: [String: Any] = ["schemaVersion": 1, "error": message]
         if let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys]),
            let json = String(data: data, encoding: .utf8) {
             print(json)

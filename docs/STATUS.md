@@ -10,7 +10,17 @@ the GUI, trigger a network probe, or print credentials.
 ```
 
 Exit codes: `0` = document written, `2` = no store / unreadable store (an
-`{"schema_version":1,"error":"…"}` document is printed).
+`{"schemaVersion":1,"error":"…"}` document is printed).
+
+The error document uses the same `schemaVersion` key as the success document.
+Earlier builds emitted `schema_version` there, so a client written against that
+spelling must accept both once; no other field changed and the schema version
+stays 1.
+
+For a decision document (which provider still has quota, with reason codes) use
+the separate `qbar --advise-json` contract: [ADVISOR.md](ADVISOR.md). It reads a
+different table and has its own `schemaVersion`; this document is only the
+observation contract.
 
 ## Schema (v1)
 

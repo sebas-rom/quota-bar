@@ -91,7 +91,8 @@ counted in `excludedCheckpoints`, separately from engine abstentions
   the engine emitted a prediction. An engine that stays silent through a crossing
   therefore scores zero recall, not a missing value.
 - Exit 0 for a report (including insufficient data); exit 2 for an unreadable
-  store or encode failure.
+  store or encode failure. The error document uses the same `schemaVersion` key
+  as the report, so one decoder handles both.
 
 ## Gate (per provider/window)
 

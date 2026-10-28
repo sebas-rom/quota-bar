@@ -65,6 +65,14 @@ public enum ProviderPresentation: Equatable, Sendable {
 @MainActor
 public final class QuotaModel: ObservableObject {
     @Published public private(set) var snapshots: [ProviderID: ProviderSnapshot] = [:]
+    /// Atomic current state per provider. Decisions read this, never the
+    /// per-window history rows (which cannot prove the windows came from one
+    /// probe, or one account).
+    @Published public private(set) var providerStates: [ProviderID: ProviderState] = [:]
+    /// True only after a complete refresh pass (Codex, Command Code **and** Go)
+    /// has finished in this launch. The advice row waits for it, so persisted
+    /// advice is never shown next to a card that is still checking.
+    @Published public private(set) var hasFullRefresh = false
     @Published public private(set) var health: [ProviderID: ProviderHealth] = [:]
     @Published public private(set) var refreshing = false
     @Published public private(set) var lastRefresh: Date?
@@ -78,31 +86,70 @@ public final class QuotaModel: ObservableObject {
     /// backfilled or demo data). The app wires this to notifications.
     public var onNetworkSnapshot: ((ProviderSnapshot) -> Void)?
 
-    private let probes: QuotaProbes
+    private var probes: any ProbeProviding
+    /// Builds the probe set for a newly selected source. Production always
+    /// returns `QuotaProbes`; tests substitute a controllable fake.
+    private let probeFactory: (CodexSource) -> any ProbeProviding
+    private let defaults: UserDefaults
     private var timer: Timer?
+    /// Bumped whenever the Codex source changes, so a result produced by the
+    /// previous source cannot be applied after the user switched.
+    private var sourceGeneration = 0
+    private var pendingRefresh = false
     private var trendCache: [String: [SamplePoint]] = [:]
     private var lastPrune = Date.distantPast
     private var backfillTask: Task<Void, Never>?
 
-    public init(probes: QuotaProbes = QuotaProbes(), store: TelemetryStore? = nil, isDemo: Bool = false) {
+    public init(
+        probes: any ProbeProviding = QuotaProbes(),
+        store: TelemetryStore? = nil,
+        isDemo: Bool = false,
+        defaults: UserDefaults = .standard,
+        probeFactory: ((CodexSource) -> any ProbeProviding)? = nil
+    ) {
         self.probes = probes
         self.store = store
         self.isDemo = isDemo
+        self.defaults = defaults
+        self.probeFactory = probeFactory ?? { QuotaProbes(codexSource: $0) }
     }
 
     /// Production instance: opens the on-disk store, degrading to memory-less
     /// mode (quota still works) if the store cannot be opened.
-    public static func live() -> QuotaModel {
+    ///
+    /// `defaults` and `makeStore` exist for tests: the store-failure branch used
+    /// to drop the user's chosen Codex source, which would quietly turn a
+    /// strict local-only setting back into an HTTP request.
+    public static func live(
+        defaults: UserDefaults = .standard,
+        makeStore: () throws -> TelemetryStore = { try TelemetryStore(path: TelemetryStore.defaultPath()) }
+    ) -> QuotaModel {
+        let source = CodexSource(rawValue: defaults.string(forKey: "CodexSource") ?? "") ?? .http
         do {
-            let store = try TelemetryStore(path: TelemetryStore.defaultPath())
-            let model = QuotaModel(store: store)
+            let store = try makeStore()
+            let model = QuotaModel(probes: QuotaProbes(codexSource: source), store: store, defaults: defaults)
             model.historyCount = store.count()
+            model.providerStates = store.providerStates()
             return model
         } catch {
-            let model = QuotaModel()
+            let model = QuotaModel(probes: QuotaProbes(codexSource: source), defaults: defaults)
             model.storeIssue = "History is off: \(error)."
             return model
         }
+    }
+
+    // MARK: codex source
+
+    /// Which transport supplies Codex numbers. Persisted so the choice survives
+    /// a relaunch, and applied immediately so the next refresh uses it.
+    public var codexSource: CodexSource { probes.codexSource }
+
+    public func setCodexSource(_ source: CodexSource) {
+        defaults.set(source.rawValue, forKey: "CodexSource")
+        guard probes.codexSource != source else { return }
+        probes = probeFactory(source)
+        sourceGeneration += 1
+        Task { await refresh() }
     }
 
     // MARK: lifecycle
@@ -127,17 +174,33 @@ public final class QuotaModel: ObservableObject {
     // MARK: refresh
 
     public func refresh() async {
-        guard !refreshing else { return }
+        guard !refreshing else {
+            // A source switch (or a manual refresh) during a run must not be
+            // dropped: run once more when the current pass finishes.
+            pendingRefresh = true
+            return
+        }
         refreshing = true
-        defer { refreshing = false }
+        let generation = sourceGeneration
+        defer {
+            refreshing = false
+            if pendingRefresh {
+                pendingRefresh = false
+                Task { await refresh() }
+            }
+        }
 
-        async let goResult = probes.go()
-        async let codexResult = probes.codex()
-        async let commandCodeResult = probes.commandCode()
+        let stamp = Date()
+        async let goResult = probes.go(now: stamp)
+        async let codexResult = probes.codex(now: stamp)
+        async let commandCodeResult = probes.commandCode(now: stamp)
 
         // Apply the providers that cannot block on a system prompt first, so a
         // Keychain dialog can never hide fresh Codex/Command Code data.
-        apply(await codexResult, provider: .codex)
+        let codex = await codexResult
+        if generation == sourceGeneration {
+            apply(codex, provider: .codex)
+        }
         apply(await commandCodeResult, provider: .commandCode)
         lastRefresh = Date()
         pruneIfNeeded()
@@ -145,26 +208,54 @@ public final class QuotaModel: ObservableObject {
 
         apply(await goResult, provider: .go)
         lastRefresh = Date()
+        hasFullRefresh = true
         pruneIfNeeded()
         invalidateHistory()
     }
 
     private func apply(_ result: ProbeResult, provider: ProviderID) {
+        let now = Date()
         switch result {
         case let .ok(snapshot):
             snapshots[provider] = snapshot
-            health[provider] = ProviderHealth(state: .ok, attemptedAt: Date())
+            health[provider] = ProviderHealth(state: .ok, attemptedAt: now)
             store?.insert(snapshot)
             if snapshot.origin == .network {
                 onNetworkSnapshot?(snapshot)
             }
         case let .stale(snapshot, state, message):
             snapshots[provider] = snapshot
-            health[provider] = ProviderHealth(state: state, message: message, attemptedAt: Date())
+            health[provider] = ProviderHealth(state: state, message: message, attemptedAt: now)
             store?.insert(snapshot)
         case let .failed(state, message):
             // Keep the last good snapshot on purpose.
-            health[provider] = ProviderHealth(state: state, message: message, attemptedAt: Date())
+            health[provider] = ProviderHealth(state: state, message: message, attemptedAt: now)
+        }
+        recordState(provider: provider, result: result, now: now)
+    }
+
+    /// Persists the atomic current state. The transition rules live in
+    /// `ProviderState.next` so they can be tested without a model.
+    ///
+    /// Publication follows the store, not the other way round: a write the store
+    /// rejected because it predates Clear History must not reappear in memory
+    /// either. A fresh failure with no retained evidence is allowed through
+    /// (that is how "no credentials" reaches the advisor after a deletion).
+    func recordState(provider: ProviderID, result: ProbeResult, now: Date) {
+        let previous = providerStates[provider]
+        let next = ProviderState.next(previous, result: result, provider: provider, now: now)
+        guard let store else {
+            providerStates[provider] = next
+            return
+        }
+        switch store.saveProviderState(next) {
+        case .saved:
+            providerStates[provider] = next
+        case .rejectedByCutoff:
+            break
+        case .failed:
+            // Keep the in-memory view usable even when the disk write failed.
+            providerStates[provider] = next
         }
     }
 
@@ -173,6 +264,12 @@ public final class QuotaModel: ObservableObject {
         lastPrune = Date()
         store.prune(olderThan: Date().addingTimeInterval(-90 * 86_400))
         historyCount = store.count()
+    }
+
+    /// Current advice from persisted atomic state. Read-only and side-effect
+    /// free: the same function backs the popover row and `--advise-json`.
+    public func advice(taskMinutes: Int? = nil, now: Date = Date()) -> Advice {
+        Advisor.evaluate(states: providerStates, now: now, taskMinutes: taskMinutes)
     }
 
     // MARK: history
@@ -203,8 +300,7 @@ public final class QuotaModel: ObservableObject {
     /// Forecast for a single window. Only 5-hour (rolling) windows are shown;
     /// everything else abstains.
     public func forecast(for provider: ProviderID, window: QuotaWindow, now: Date = Date()) -> ForecastState {
-        guard window.windowMinutes == 300,
-              window.kind == .rolling || window.kind == .primary,
+        guard WindowSemantics.isForecastable(window: window),
               let store else { return .unavailable("not a 5-hour window") }
         let samples = store.forecastSamples(
             provider: provider,
@@ -249,8 +345,7 @@ public final class QuotaModel: ObservableObject {
         window: QuotaWindow,
         now: Date = Date()
     ) -> ForecastProjection? {
-        guard window.windowMinutes == 300,
-              window.kind == .rolling || window.kind == .primary,
+        guard WindowSemantics.isForecastable(window: window),
               let store else { return nil }
         let samples = store.forecastSamples(
             provider: provider,
@@ -393,6 +488,7 @@ public final class QuotaModel: ObservableObject {
         let cleared = store?.clearAll() ?? false
         if cleared {
             store?.setMeta("codex_backfill_v1", "cleared")
+            providerStates = [:]
             storeIssue = nil
         } else {
             storeIssue = "History could not be cleared. Try again."
@@ -615,5 +711,12 @@ public final class QuotaModel: ObservableObject {
         health[snapshot.provider] = ProviderHealth(state: .ok, attemptedAt: Date())
         lastRefresh = Date()
         invalidateHistory()
+        // Demo mode must exercise the same current-state contract as a probe,
+        // otherwise the advisor would be blank in every preview and screenshot.
+        let now = Date()
+        if let store {
+            recordState(provider: snapshot.provider, result: .ok(snapshot), now: now)
+        }
+        hasFullRefresh = true
     }
 }

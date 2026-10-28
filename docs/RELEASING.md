@@ -59,7 +59,7 @@ git checkout feat/updates   # after merge: main
 make update                 # build + install + relaunch
 ```
 
-After that, *Check for Updates…* can replace the app in place.
+After that, *Settings → General → Check Now* can replace the app in place.
 
 ## Acceptance before trusting the pipeline
 
@@ -69,7 +69,7 @@ Perform once on an unlocked Mac, recording source and destination builds:
    nightly; confirm quotas and history work.
 2. Publish a nightly; confirm the release asset name, appcast URL, length,
    `sparkle:version`, and EdDSA signature all match the ZIP.
-3. Switch to Nightly, *Check for Updates…*, install, confirm the app quits,
+3. Switch to Nightly in Settings → General, press *Check Now*, install, confirm the app quits,
    relaunches, and the bundle version increased.
 4. Confirm telemetry history, Keychain access, and both provider probes survive.
 5. Check again: no phantom update, no re-download.

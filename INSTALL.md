@@ -91,8 +91,8 @@ Agent rules:
 ## Updates
 
 Sparkle 2 with Stable (tagged) and Nightly (main) channels. Use
-⋯ → **Check for Updates…**; toggle the channel under ⋯ → **Update channel**.
-Nightly is opt-in. Updates are Ed25519-signed and verified against the public key
+**Settings → General → Check Now**; pick the channel with **Settings → General →
+Channel**. Nightly is opt-in. Updates are Ed25519-signed and verified against the public key
 inside the app.
 
 ## Diagnostics

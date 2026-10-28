@@ -8,7 +8,7 @@ import QuotaBarKit
 // Popover: current windows, 24h trend, provenance and freshness.
 // History: a real window with range charts over the local observation store.
 
-private let appVersion = "0.11.0"
+private let appVersion = "0.12.0"
 
 @MainActor
 enum AppEnvironment {
@@ -30,6 +30,12 @@ enum QuotaBarMain {
         let args = ProcessInfo.processInfo.arguments
         if args.contains("--status-json") {
             StatusCLI.run()
+        }
+        if args.contains("--advise-json") {
+            AdviseCLI.run(arguments: args)
+        }
+        if args.contains("--codex-app-server-probe") {
+            CodexProbeCLI.run()
         }
         if args.contains("--forecast-backtest") {
             ForecastBacktestCLI.run()
@@ -146,12 +152,18 @@ struct PopoverView: View {
     @ObservedObject private var alerter = QuotaAlerter.shared
     @ObservedObject private var launchAtLogin = LaunchAtLoginController.shared
     @AppStorage("CompactCards") private var compactCards = true
+    @AppStorage("AdvisorEnabled") private var advisorEnabled = false
+    @AppStorage("AdvisorTaskMinutes") private var advisorTaskMinutes = 60
     /// Evidence snapshots render the content without presentation modifiers,
     /// which ImageRenderer cannot lay out reliably.
     var showsPresentation = true
     /// Evidence renders pin the card density so snapshots never inherit the
     /// developer's own preference.
     var compactOverride: Bool? = nil
+    /// Evidence renders pin the advisor state too, so a screenshot never
+    /// depends on the developer's own preferences.
+    var advisorOverride: Bool? = nil
+    var taskMinutesOverride: Int? = nil
 
     @State private var showKeyEntry = false
     @State private var keyInput = ""
@@ -163,6 +175,8 @@ struct PopoverView: View {
     @State private var expandedProviders: Set<ProviderID> = []
 
     private var isCompact: Bool { compactOverride ?? compactCards }
+    private var showAdvisor: Bool { advisorOverride ?? advisorEnabled }
+    private var taskMinutes: Int { taskMinutesOverride ?? advisorTaskMinutes }
 
     private var visibleProviders: [ProviderID] {
         layout.layout.visible.filter {
@@ -317,6 +331,17 @@ struct PopoverView: View {
             if let headsUp {
                 headsUpRow(headsUp)
             }
+            // Advice is persisted evidence. Until every provider has answered
+            // once in this launch (including a slow Go probe), a card can still
+            // be "checking" or showing a local-log fallback while the row shows
+            // last launch's decision. Wait for the whole pass.
+            if showAdvisor, model.hasFullRefresh {
+                AdvisorRow(
+                    advice: model.advice(taskMinutes: taskMinutes),
+                    taskMinutes: taskMinutes,
+                    onSettings: openSettings
+                )
+            }
             ForEach(visibleProviders, id: \.self) { provider in
                 let snapshot = model.snapshots[provider]
                 let cardTrend = snapshot?.limiting.flatMap { trend(for: provider, window: $0) }
@@ -331,9 +356,17 @@ struct PopoverView: View {
                     onRecovery: recoveryAction(for: provider),
                     recoveryTitle: recoveryTitle(for: provider),
                     forecastFor: { window in
-                        guard window.windowMinutes == 300,
-                              window.kind == .rolling || window.kind == .primary else { return nil }
-                        return ForecastCopy.riskLine(for: model.forecast(for: provider, window: window))
+                        guard WindowSemantics.isForecastable(window: window) else { return nil }
+                        let state = model.forecast(for: provider, window: window)
+                        if showAdvisor,
+                           let task = ForecastCopy.taskRiskLine(
+                               for: state,
+                               taskMinutes: taskMinutes,
+                               rolling: model.isRollingWindow(provider, window)
+                           ) {
+                            return task
+                        }
+                        return ForecastCopy.riskLine(for: state)
                     },
                     compact: isCompact,
                     isExpanded: expandedProviders.contains(provider),

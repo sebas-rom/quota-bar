@@ -10,6 +10,15 @@ import SQLite3
 
 private let sqliteTransient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
+/// Result of writing one provider's current state. The cutoff case is
+/// distinct from a storage failure: the record is valid, it is simply evidence
+/// the user deleted.
+public enum ProviderStateSave: Equatable {
+    case saved
+    case rejectedByCutoff
+    case failed
+}
+
 public enum StoreError: Error, Equatable {
     case open(String)
     case prepare(String)
@@ -17,7 +26,10 @@ public enum StoreError: Error, Equatable {
 }
 
 public final class TelemetryStore: @unchecked Sendable {
-    public static let schemaVersion: Int32 = 1
+    /// Version 2 adds `provider_state`: one atomic current-state record per
+    /// provider. The `sample` history table is unchanged, so charts, replay and
+    /// `--status-json` keep their v1 meaning.
+    public static let schemaVersion: Int32 = 2
 
     private var db: OpaquePointer?
     private let lock = NSLock()
@@ -122,10 +134,25 @@ public final class TelemetryStore: @unchecked Sendable {
         _ = try? run("DELETE FROM sample WHERE observed_at < ?", [date.timeIntervalSince1970])
     }
 
+    /// Wipes everything without recording a deletion cutoff. Test helper and
+    /// the explicit "start over" path; the user-facing Clear History goes
+    /// through `clearAll(now:)`, which is transactional and timestamped.
+    ///
+    /// Deletions run in one transaction so an interrupted call cannot leave
+    /// half a store behind.
     public func reset() {
-        _ = try? exec("DELETE FROM sample")
-        _ = try? exec("DELETE FROM meta")
-        clearedAt = nil
+        lock.lock(); defer { lock.unlock() }
+        guard let db else { return }
+        guard sqlite3_exec(db, "BEGIN IMMEDIATE", nil, nil, nil) == SQLITE_OK else { return }
+        let sampleDeleted = sqlite3_exec(db, "DELETE FROM sample", nil, nil, nil) == SQLITE_OK
+        let stateDeleted = sqlite3_exec(db, "DELETE FROM provider_state", nil, nil, nil) == SQLITE_OK
+        let metaDeleted = sqlite3_exec(db, "DELETE FROM meta", nil, nil, nil) == SQLITE_OK
+        if sampleDeleted, stateDeleted, metaDeleted,
+           sqlite3_exec(db, "COMMIT", nil, nil, nil) == SQLITE_OK {
+            clearedAt = nil
+        } else {
+            _ = sqlite3_exec(db, "ROLLBACK", nil, nil, nil)
+        }
     }
 
     /// Deletes every observation and records the deletion cutoff in the same
@@ -137,6 +164,9 @@ public final class TelemetryStore: @unchecked Sendable {
         guard let db else { return false }
         guard sqlite3_exec(db, "BEGIN IMMEDIATE", nil, nil, nil) == SQLITE_OK else { return false }
         let delete = sqlite3_exec(db, "DELETE FROM sample", nil, nil, nil) == SQLITE_OK
+        // Current state is advisory input: deleting history must not leave a
+        // recommendation standing on evidence the user just erased.
+        let deleteState = sqlite3_exec(db, "DELETE FROM provider_state", nil, nil, nil) == SQLITE_OK
         var stmt: OpaquePointer?
         var cutoffWritten = false
         if sqlite3_prepare_v2(db, "INSERT OR REPLACE INTO meta(key, value) VALUES ('history_cleared_at', ?)", -1, &stmt, nil) == SQLITE_OK {
@@ -144,7 +174,7 @@ public final class TelemetryStore: @unchecked Sendable {
             cutoffWritten = sqlite3_step(stmt) == SQLITE_DONE
         }
         sqlite3_finalize(stmt)
-        guard delete, cutoffWritten else {
+        guard delete, deleteState, cutoffWritten else {
             sqlite3_exec(db, "ROLLBACK", nil, nil, nil)
             return false
         }
@@ -465,6 +495,87 @@ public final class TelemetryStore: @unchecked Sendable {
         return (attrs?[.size] as? NSNumber)?.int64Value ?? 0
     }
 
+    // MARK: current provider state
+
+    private static let stateEncoder: JSONEncoder = {
+        let e = JSONEncoder()
+        e.outputFormatting = [.sortedKeys]
+        e.dateEncodingStrategy = .iso8601
+        return e
+    }()
+
+    private static let stateDecoder: JSONDecoder = {
+        let d = JSONDecoder()
+        d.dateDecodingStrategy = .iso8601
+        return d
+    }()
+
+    /// Writes one provider's current state as a single row. A record is never
+    /// partially applied: either the whole payload lands or nothing changes.
+    @discardableResult
+    public func saveProviderState(_ state: ProviderState) -> ProviderStateSave {
+        guard let payload = try? Self.stateEncoder.encode(state),
+              let json = String(data: payload, encoding: .utf8) else { return .failed }
+        let sql = """
+        INSERT OR REPLACE INTO provider_state
+            (provider, generation, observed_at, completeness, payload)
+        VALUES (?, ?, ?, ?, ?)
+        """
+        return withLock { db -> ProviderStateSave in
+            // The same cutoff that protects history must protect current state,
+            // or a probe that started before Clear History could restore advice
+            // the user just deleted. Two shapes are still legitimate after the
+            // cutoff: a genuinely fresh observation, and a fresh failure that
+            // retains no pre-clear evidence (that is how "no credentials"
+            // reaches the advisor after a deletion).
+            if let cutoff = clearedAt {
+                let hasFreshObservation = state.observedAt.map { $0 > cutoff } ?? false
+                let isFreshFailure = state.observedAt == nil
+                    && state.windows.isEmpty
+                    && (state.probeAt.map { $0 > cutoff } ?? false)
+                guard hasFreshObservation || isFreshFailure else { return .rejectedByCutoff }
+            }
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else { return .failed }
+            defer { sqlite3_finalize(stmt) }
+            bind(stmt, 1, state.provider.rawValue)
+            sqlite3_bind_int64(stmt, 2, Int64(state.generation))
+            if let observedAt = state.observedAt {
+                sqlite3_bind_double(stmt, 3, observedAt.timeIntervalSince1970)
+            } else {
+                sqlite3_bind_null(stmt, 3)
+            }
+            bind(stmt, 4, state.completeness.rawValue)
+            bind(stmt, 5, json)
+            return sqlite3_step(stmt) == SQLITE_DONE ? .saved : .failed
+        } ?? .failed
+    }
+
+    public func providerState(_ provider: ProviderID) -> ProviderState? {
+        providerStates()[provider]
+    }
+
+    /// Every persisted current state, keyed by provider. An empty table means
+    /// "no decision input yet" — callers must treat that as unknown, not as
+    /// zero usage.
+    public func providerStates() -> [ProviderID: ProviderState] {
+        withLock { db -> [ProviderID: ProviderState] in
+            var stmt: OpaquePointer?
+            defer { sqlite3_finalize(stmt) }
+            guard sqlite3_prepare_v2(db, "SELECT payload FROM provider_state", -1, &stmt, nil) == SQLITE_OK else {
+                return [:]
+            }
+            var out: [ProviderID: ProviderState] = [:]
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                guard let c = sqlite3_column_text(stmt, 0),
+                      let data = String(cString: c).data(using: .utf8),
+                      let state = try? Self.stateDecoder.decode(ProviderState.self, from: data) else { continue }
+                out[state.provider] = state
+            }
+            return out
+        } ?? [:]
+    }
+
     // MARK: meta
 
     public func meta(_ key: String) -> String? {
@@ -505,6 +616,19 @@ public final class TelemetryStore: @unchecked Sendable {
             try exec("CREATE INDEX IF NOT EXISTS sample_time ON sample(observed_at)")
             try exec("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
             try exec("PRAGMA user_version = 1")
+        }
+        if version < 2 {
+            // Additive only: history rows and their meaning are untouched.
+            try exec("""
+            CREATE TABLE IF NOT EXISTS provider_state (
+                provider TEXT PRIMARY KEY,
+                generation INTEGER NOT NULL,
+                observed_at REAL,
+                completeness TEXT NOT NULL,
+                payload TEXT NOT NULL
+            )
+            """)
+            try exec("PRAGMA user_version = 2")
         }
     }
 

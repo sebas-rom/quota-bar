@@ -74,15 +74,34 @@ public enum CommandCode {
         return planCredits[planId]
     }
 
-    /// API key discovery, in order: env, then the opencode provider config the
-    /// official integration uses. The key is never logged.
+    /// API key discovery for Command Code, in the order the product actually
+    /// documents it:
+    ///   1. `COMMANDCODE_API_KEY` (QuotaBar's original variable) and
+    ///      `COMMAND_CODE_API_KEY` (the official CLI's variable).
+    ///   2. `~/.commandcode/auth.json`, the file the official CLI writes when
+    ///      you run `commandcode login`. Its shape is not a public schema, so
+    ///      parsing is deliberately narrow: only string values under a short
+    ///      allowlist of key names, at the top level or one known container
+    ///      deep. Unknown shapes yield no key, never a guess.
+    ///   3. The opencode provider config the official OpenCode integration uses
+    ///      (`providers.commandcode.settings.apiKey`).
+    ///
+    /// The key is never logged, and a Finder-launched app does not inherit
+    /// shell exports: the file paths matter as much as the environment.
     public static func discoverKey(
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        configURLs: [URL]? = nil
+        configURLs: [URL]? = nil,
+        authURLs: [URL]? = nil
     ) -> String? {
-        if let env = environment["COMMANDCODE_API_KEY"]?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !env.isEmpty, !env.hasPrefix("{env:") {
-            return env
+        for name in ["COMMANDCODE_API_KEY", "COMMAND_CODE_API_KEY"] {
+            if let env = environment[name]?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !env.isEmpty, !env.hasPrefix("{env:") {
+                return env
+            }
+        }
+        for url in authURLs ?? defaultAuthURLs() {
+            guard let data = try? Data(contentsOf: url) else { continue }
+            if let key = keyFromAuthFile(data) { return key }
         }
         let urls = configURLs ?? defaultConfigURLs()
         for url in urls {
@@ -98,6 +117,46 @@ public enum CommandCode {
         }
         return nil
     }
+
+    /// Field names the CLI's auth file has used or may plausibly use. A value
+    /// that is not a non-empty string, or that is a `{env:…}` placeholder, is
+    /// ignored rather than coerced.
+    private static let authKeyNames = [
+        "apiKey", "api_key", "key", "token", "accessToken", "access_token",
+    ]
+    private static let authContainers = ["auth", "credentials", "data", "session", "account"]
+
+    /// Narrow, defensive parse of `~/.commandcode/auth.json`. Exposed for tests.
+    public static func keyFromAuthFile(_ data: Data) -> String? {
+        guard let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
+        func usable(_ value: Any?) -> String? {
+            guard let s = value as? String else { return nil }
+            let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, !trimmed.hasPrefix("{env:"), trimmed.count >= 8 else { return nil }
+            return trimmed
+        }
+        for name in authKeyNames {
+            if let key = usable(obj[name]) { return key }
+        }
+        for container in authContainers {
+            guard let nested = obj[container] as? [String: Any] else { continue }
+            for name in authKeyNames {
+                if let key = usable(nested[name]) { return key }
+            }
+        }
+        return nil
+    }
+
+    public static func defaultAuthURLs() -> [URL] {
+        var urls: [URL] = []
+        if let xdg = ProcessInfo.processInfo.environment["XDG_CONFIG_HOME"], !xdg.isEmpty {
+            urls.append(URL(fileURLWithPath: xdg).appendingPathComponent("commandcode/auth.json"))
+        }
+        urls.append(homeDir().appendingPathComponent(".commandcode/auth.json"))
+        urls.append(homeDir().appendingPathComponent(".config/commandcode/auth.json"))
+        return urls
+    }
+
 
     static func defaultConfigURLs() -> [URL] {
         var urls: [URL] = []
@@ -185,7 +244,10 @@ public enum CommandCode {
                                subscription: CommandCodeSubscription?) -> [QuotaWindow] {
         var windows: [QuotaWindow] = [
             QuotaWindow(
-                id: "commandcode.5h", kind: .rolling, label: "5-hour",
+                // `.primary`, not `.rolling`: Command Code's window opens on the
+                // first request and then runs a fixed 5 hours. WindowSemantics
+                // decides rolling-ness; the kind only marks the role.
+                id: "commandcode.5h", kind: .primary, label: "5-hour",
                 percent: credits.fiveHourUsed / credits.fiveHourCap * 100,
                 resetsAt: credits.fiveHourReset, windowMinutes: 300,
                 isLimited: credits.fiveHourExceeded

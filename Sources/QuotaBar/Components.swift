@@ -13,6 +13,109 @@ enum Layout {
     static let rowSpacing: CGFloat = 10
 }
 
+// MARK: - Next-task advice
+//
+// One quiet row above the cards. It answers "where should the next task go?"
+// with a sentence plus one chip per provider, and it never invents confidence:
+// when the evidence does not single out a provider, the row says so instead of
+// picking a winner. Chips are glanceable, so the full sentence lives in the
+// tooltip and in the accessibility label.
+
+func eligibilityColor(_ eligibility: Eligibility) -> Color {
+    switch eligibility {
+    case .available: return .green
+    case .constrained: return .orange
+    case .exhausted: return .red
+    case .unknown: return .secondary
+    }
+}
+
+private func eligibilityWord(_ eligibility: Eligibility) -> String {
+    switch eligibility {
+    case .available: return "headroom"
+    case .constrained: return "close to limit"
+    case .exhausted: return "out of quota"
+    case .unknown: return "unknown"
+    }
+}
+
+struct AdvisorRow: View {
+    let advice: Advice
+    let taskMinutes: Int
+    var onSettings: () -> Void = {}
+
+    private var symbol: String {
+        switch advice.recommendation.status {
+        case .ok: return "checkmark.circle.fill"
+        case .conditional: return "questionmark.circle.fill"
+        case .unknown: return "questionmark.circle"
+        }
+    }
+
+    private var symbolColor: Color {
+        switch advice.recommendation.status {
+        case .ok: return .green
+        case .conditional: return .orange
+        case .unknown: return .secondary
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 5) {
+                Image(systemName: symbol)
+                    .font(.caption2)
+                    .foregroundStyle(symbolColor)
+                    .accessibilityHidden(true)
+                Text("Next task · \(taskMinutes) min")
+                    .font(.caption)
+                    .fontWeight(.medium)
+                Spacer(minLength: 4)
+                Button("Settings…", action: onSettings)
+                    .font(.caption2)
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Color.accentColor)
+                    .accessibilityLabel("Open advice settings")
+            }
+            Text(advice.recommendation.summary)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if !advice.providers.isEmpty {
+                HStack(spacing: 4) {
+                    ForEach(advice.providers, id: \.id) { provider in
+                        HStack(spacing: 3) {
+                            Circle()
+                                .fill(eligibilityColor(provider.eligibility))
+                                .frame(width: 4, height: 4)
+                            Text(shortProviderName(provider.id))
+                                .font(.caption2)
+                        }
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(.quaternary.opacity(0.4), in: Capsule())
+                        .help("\(provider.name): \(eligibilityWord(provider.eligibility)). \(provider.headline)")
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("\(provider.name): \(eligibilityWord(provider.eligibility)). \(provider.headline)")
+                    }
+                    Spacer(minLength: 0)
+                }
+            }
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary.opacity(0.25), in: RoundedRectangle(cornerRadius: 10))
+        .accessibilityElement(children: .contain)
+    }
+
+    /// The popover is 320pt wide, so chips use the same short labels as the
+    /// menu bar rather than full provider names.
+    private func shortProviderName(_ id: String) -> String {
+        guard let provider = ProviderID(rawValue: id) else { return id }
+        return provider.shortName
+    }
+}
+
 func dotColor(_ name: String) -> Color {
     switch name {
     case "green": return .green

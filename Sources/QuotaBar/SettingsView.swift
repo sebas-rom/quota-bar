@@ -15,6 +15,8 @@ struct SettingsView: View {
     @ObservedObject var updates: UpdateController
     @ObservedObject var launchAtLogin: LaunchAtLoginController
     @AppStorage("CompactCards") private var compactCards = true
+    @AppStorage("AdvisorEnabled") private var advisorEnabled = false
+    @AppStorage("AdvisorTaskMinutes") private var advisorTaskMinutes = 60
 
     @State private var selection: ProviderID?
 
@@ -182,57 +184,107 @@ struct SettingsView: View {
         .padding(16)
     }
 
+    private var codexSourceHint: String {
+        switch model.codexSource {
+        case .http:
+            return "Reads the live endpoint over the network. No local process."
+        case .appServer:
+            return "Reads only from the installed Codex CLI — no network request. Needs a signed-in CLI that QuotaBar can find."
+        case .automatic:
+            return "Uses the Codex CLI when it answers, otherwise the network endpoint."
+        }
+    }
+
     // MARK: general
 
     private var generalTab: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Toggle("Launch at login", isOn: Binding(
-                get: { launchAtLogin.enabled },
-                set: { launchAtLogin.set($0) }
-            ))
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                Toggle("Launch at login", isOn: Binding(
+                    get: { launchAtLogin.enabled },
+                    set: { launchAtLogin.set($0) }
+                ))
 
-            Toggle("Compact cards", isOn: $compactCards)
-            Text("Compact cards show the most-used window; turn this off to show every window at once.")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            Divider()
-
-            Toggle("Check for updates automatically", isOn: $updates.automaticChecks)
-            HStack {
-                Picker("Channel", selection: Binding(
-                    get: { updates.channel },
-                    set: { updates.setChannel($0) }
-                )) {
-                    ForEach(UpdateChannel.allCases) { channel in
-                        Text(channel.title).tag(channel)
-                    }
-                }
-                .frame(maxWidth: 220)
-                Spacer()
-                Button("Check Now") { updates.checkForUpdates() }
-            }
-            Text("Nightly builds come straight from main. Stable builds are tagged releases.")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            Divider()
-
-            HStack {
-                Text("Refresh every 5 minutes and on wake.")
+                Toggle("Compact cards", isOn: $compactCards)
+                Text("Compact cards show the most-used window; turn this off to show every window at once.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
-                Spacer()
-                if let issue = model.storeIssue {
-                    Text(issue).font(.caption2).foregroundStyle(.orange)
-                }
-            }
+                    .fixedSize(horizontal: false, vertical: true)
 
-            Spacer(minLength: 0)
+                Divider()
+
+                Toggle("Next-task advice", isOn: $advisorEnabled)
+                HStack {
+                    Picker("Task length", selection: $advisorTaskMinutes) {
+                        Text("25 min").tag(25)
+                        Text("1 hour").tag(60)
+                        Text("3 hours").tag(180)
+                    }
+                    .frame(maxWidth: 220)
+                    .disabled(!advisorEnabled)
+                    Spacer()
+                }
+                Text("Adds one row to the popover: which provider has headroom for a task of that length. It compares headroom only — providers report different units, so there is no ranking or confidence score, and it stays silent when a reading is stale or unknown.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Divider()
+
+                HStack {
+                    Picker("Codex reading", selection: Binding(
+                        get: { model.codexSource },
+                        set: { model.setCodexSource($0) }
+                    )) {
+                        Text("HTTP (default)").tag(CodexSource.http)
+                        Text("Codex app-server").tag(CodexSource.appServer)
+                        Text("Automatic").tag(CodexSource.automatic)
+                    }
+                    .frame(maxWidth: 220)
+                    Spacer()
+                }
+                Text(codexSourceHint)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Divider()
+
+                Toggle("Check for updates automatically", isOn: $updates.automaticChecks)
+                HStack {
+                    Picker("Channel", selection: Binding(
+                        get: { updates.channel },
+                        set: { updates.setChannel($0) }
+                    )) {
+                        ForEach(UpdateChannel.allCases) { channel in
+                            Text(channel.title).tag(channel)
+                        }
+                    }
+                    .frame(maxWidth: 220)
+                    Spacer()
+                    Button("Check Now") { updates.checkForUpdates() }
+                }
+                Text("Nightly builds come straight from main. Stable builds are tagged releases.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Divider()
+
+                HStack {
+                    Text("Refresh every 5 minutes and on wake.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    if let issue = model.storeIssue {
+                        Text(issue).font(.caption2).foregroundStyle(.orange)
+                    }
+                }
+
+                Spacer(minLength: 0)
+            }
+            .padding(16)
         }
-        .padding(16)
     }
 }
 

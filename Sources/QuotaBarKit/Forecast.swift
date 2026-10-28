@@ -207,6 +207,31 @@ public enum ForecastCopy {
         }
     }
 
+    /// Duration-aware variant of `riskLine`. It states only what the existing
+    /// forecast already proved — a 95% crossing at the recent pace — and adds the
+    /// one comparison that makes it actionable: does that crossing fall inside
+    /// the task you are about to start?
+    ///
+    /// Deliberately narrow:
+    ///   * rolling 5-hour windows (Go, Codex) are excluded: their reset advances
+    ///     with time, so "crossing before reset" has no stable meaning yet;
+    ///   * the crossing must fall inside the forecast's own 2-hour horizon; a
+    ///     longer task is allowed, but the sentence only describes the part the
+    ///     forecast can see, and an abstention is never "safe";
+    ///   * the 95% threshold is never described as exhaustion or a block.
+    ///
+    /// Returns nil when the plain `riskLine` should be used instead.
+    public static func taskRiskLine(
+        for state: ForecastState,
+        taskMinutes: Int,
+        rolling: Bool
+    ) -> String? {
+        guard taskMinutes > 0, !rolling else { return nil }
+        guard case let .approaching95(minutes, _) = state else { return nil }
+        guard minutes <= taskMinutes else { return nil }
+        return "At recent pace, 95% in ~\(duration(minutes)) — inside your \(duration(taskMinutes)) task"
+    }
+
     static func duration(_ minutes: Int) -> String {
         if minutes < 60 { return "\(minutes)m" }
         let h = minutes / 60

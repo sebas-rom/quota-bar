@@ -126,7 +126,7 @@ enum DemoData {
         let commandCodeSnapshot = ProviderSnapshot(
             provider: .commandCode,
             windows: [
-                QuotaWindow(id: "commandcode.5h", kind: .rolling, label: "5-hour",
+                QuotaWindow(id: "commandcode.5h", kind: .primary, label: "5-hour",
                             percent: 10.9, resetsAt: now.addingTimeInterval(86 * 60), windowMinutes: 300, isLimited: false),
                 QuotaWindow(id: "commandcode.weekly", kind: .weekly, label: "Weekly",
                             percent: 4.4, resetsAt: now.addingTimeInterval(6 * 86_400), windowMinutes: 10_080, isLimited: false),

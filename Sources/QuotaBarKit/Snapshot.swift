@@ -7,7 +7,7 @@ import Foundation
 // Nothing here is provider specific, so cards and charts never branch on
 // provider identity.
 
-public enum ProviderID: String, CaseIterable, Sendable {
+public enum ProviderID: String, CaseIterable, Codable, Sendable {
     case go = "opencode-go"
     case codex = "codex"
     case commandCode = "commandcode"
@@ -29,11 +29,11 @@ public enum ProviderID: String, CaseIterable, Sendable {
     }
 }
 
-public enum WindowKind: String, Sendable {
+public enum WindowKind: String, Codable, Sendable {
     case rolling, weekly, monthly, primary, secondary, review, additional
 }
 
-public struct QuotaWindow: Identifiable, Equatable, Sendable {
+public struct QuotaWindow: Identifiable, Codable, Equatable, Sendable {
     public let id: String
     public let kind: WindowKind
     public let label: String
@@ -59,7 +59,7 @@ public struct QuotaWindow: Identifiable, Equatable, Sendable {
     }
 }
 
-public enum SnapshotOrigin: String, Sendable {
+public enum SnapshotOrigin: String, Codable, Sendable {
     case network
     case localLog
     case demo
@@ -104,7 +104,7 @@ public struct ProviderSnapshot: Identifiable, Equatable, Sendable {
     }
 }
 
-public enum HealthState: Equatable, Sendable {
+public enum HealthState: String, Codable, Equatable, Sendable {
     case ok
     case noCredentials
     case authFailed

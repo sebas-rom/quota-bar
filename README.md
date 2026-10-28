@@ -17,6 +17,48 @@ countdown and a sparkline for that same window. Order and visibility live in
 
 ![Popover](docs/evidence/popover-light.png)
 
+## What's new in 0.12 — advice, better sources, local Codex reads
+
+- **Next task, not a leaderboard.** An opt-in row above the cards names the
+  provider that still has quota for a 25 min / 1 h / 3 h task, with one chip per
+  provider. It abstains (`unknown`) when a reading is stale, local-log-only or
+  rate-limited, and it never ranks providers against each other: the units are
+  not comparable. `qbar --advise-json` exposes the same decision as its own
+  versioned document. [docs/ADVISOR.md](docs/ADVISOR.md)
+- **Atomic current state.** Advice reads one whole record per provider (store
+  schema v2, additive) instead of the newest history row per window, so two
+  probes — or two accounts — can never be stitched into an imaginary snapshot.
+  A reading is `complete` only when the provider's core windows are all present
+  (Go's 5-hour, weekly and monthly; Codex's primary and secondary; Command Code's
+  5-hour and weekly); a reply that lost one is stored as partial and never read as
+  headroom.
+- **Command Code's 5-hour window is a fixed cycle**, not a rolling one. It is
+  classified once (`WindowSemantics`) instead of by `WindowKind`, so it now gets
+  cycle charts and a forecast like other fixed windows, and the ad-hoc
+  `kind == .rolling || .primary` checks are gone.
+- **Task-aware forecast caption.** On fixed-cycle 5-hour windows only:
+  `At recent pace, 95% in ~30m — inside your 1h task`. Rolling windows stay
+  silent, and nothing is called exhaustion or a block.
+- **Command Code looks for your key where the CLI puts it.**
+  `COMMAND_CODE_API_KEY` and `~/.commandcode/auth.json` are now read alongside
+  `COMMANDCODE_API_KEY` and the OpenCode provider config. The auth-file parser is
+  deliberately narrow and tested against synthetic shapes; if your CLI writes a
+  different layout it still reads as "no credentials" rather than guessing.
+- **Codex can read itself.** Settings → General → Codex reading can use the
+  Codex CLI's local `app-server` RPC — plan, per-limit buckets, reset credits —
+  either strict local-only (no network call) or automatic with HTTP fallback.
+  `qbar --codex-app-server-probe` validates it.
+  [docs/CODEX-APP-SERVER.md](docs/CODEX-APP-SERVER.md)
+- **Contract fix.** `--status-json` error documents now use the same
+  `schemaVersion` key as success documents (they emitted `schema_version`); the
+  same one-line correction applies to `--forecast-backtest`. Both schemas stay
+  v1. [docs/STATUS.md](docs/STATUS.md)
+- **Per-project attribution is specified, not shipped.**
+  [docs/ATTRIBUTION.md](docs/ATTRIBUTION.md) records the sources, the contract
+  sketch and the reasons the hard part (attribution, not counting) comes first.
+
+Evidence: [advice row](docs/evidence/popover-advisor.png).
+
 ## What's new in 0.11 — a quieter popover you can arrange
 
 - **Providers in your order.** Drag rows in Settings → Providers, or select one
@@ -88,7 +130,7 @@ accepted trade-off: [docs/DECISIONS.md](docs/DECISIONS.md).
 
 Three providers no longer need a tall popover. Each card shows the most limiting
 window, its reset, and the current 5-hour-cycle sparkline; a small chevron
-expands every window. Toggle **Compact cards** in the ⋯ menu. History still
+expands every window. Toggle **Compact cards** in Settings → General. History still
 carries the full cycle view and forecast.
 
 ## What's new in 0.8 — a trustworthy download
@@ -199,7 +241,7 @@ supported path. Rationale: [docs/DECISIONS.md](docs/DECISIONS.md). Full details
 and agent instructions: [INSTALL.md](INSTALL.md).
 
 No setup is needed if your keys are already on disk (see below). Toggle
-**Launch at login** in the ⋯ menu.
+**Launch at login** in Settings → General.
 
 ## Data sources (read-only, except the key you choose to save)
 
@@ -207,8 +249,9 @@ No setup is needed if your keys are already on disk (see below). Toggle
 |---|---|---|
 | opencode-go | Keychain (entered in-app) → `~/.config/quota-bar/opencode-go.json` `{"apiKey"}` → `$OPENCODE_GO_API_KEY` → opencode `auth.json` `opencode-go` entry | `GET https://opencode.ai/zen/go/v1/usage` |
 | Codex live | `~/.codex/auth.json` → `tokens.access_token` (+ `account_id`) | `GET https://chatgpt.com/backend-api/wham/usage` |
+| Codex optional | `codex app-server` (the CLI's local RPC), when selected in Settings | local process, no network |
 | Codex fallback | `~/.codex/sessions/**/*.jsonl`, last `token_count` rate-limit snapshot | local file read |
-| Command Code | `$COMMANDCODE_API_KEY` → `~/.config/opencode/opencode.json` `providers.commandcode.settings.apiKey` | `GET https://api.commandcode.ai/alpha/billing/credits` + `/alpha/billing/subscriptions` |
+| Command Code | `$COMMANDCODE_API_KEY` / `$COMMAND_CODE_API_KEY` → `~/.commandcode/auth.json` → `~/.config/opencode/opencode.json` `providers.commandcode.settings.apiKey` | `GET https://api.commandcode.ai/alpha/billing/credits` + `/alpha/billing/subscriptions` |
 | History | `~/Library/Application Support/QuotaBar/telemetry.sqlite` | local SQLite |
 
 No working Go key anywhere? The menu offers **Enter API key…**: paste your
@@ -227,11 +270,12 @@ no-subscription 403, rate-limited 429, provider 5xx, offline, unexpected.
 Releases are delivered with **Sparkle 2** from one appcast, split into channels:
 
 - **Stable** — tagged releases only (default).
-- **Nightly** — every build from `main`, offered only if you switch channel in the
-  ⋯ menu (*Update channel → Nightly*).
+- **Nightly** — every build from `main`, offered only if you switch channel in
+  **Settings → General** (*Channel → Nightly*).
 
-*Check for Updates…* lives in the ⋯ menu; automatic checks are on by default
-(daily) and can be turned off there. Update archives are signed with EdDSA and
+**Check Now** lives in **Settings → General**; automatic checks are on by default
+(daily) and can be turned off there. There is deliberately no ⋯ menu item: the
+menu keeps credentials, history deletion, About and Quit. Update archives are signed with EdDSA and
 verified against the public key embedded in the app. The app itself is not
 notarized yet, so Gatekeeper still applies to the first manual install.
 
@@ -241,10 +285,12 @@ manually once; every update after that can arrive in-app.
 
 ## Privacy
 
-Local-only. QuotaBar talks directly to the two provider APIs above using tokens
+Local-only. QuotaBar talks directly to the provider APIs above using tokens
 already on your machine. History never leaves the Mac, and the store contains no
 prompts, messages, tokens, emails or account ids — account identity is reduced to
-a short stable hash. **Clear History…** (popover ⋯ menu or History window) wipes
+a short stable hash. The optional Codex `app-server` source makes **no** network
+request of its own: it asks the locally installed CLI, which owns its own
+credentials. `--advise-json` reads the same local store as `--status-json`. **Clear History…** (popover ⋯ menu or History window) wipes
 the store. No third-party servers, no analytics, no tracking.
 
 ## Build / test
@@ -252,7 +298,7 @@ the store. No third-party servers, no analytics, no tracking.
 Requires macOS 13+, Xcode 15+ / Swift 5.9+.
 
 ```sh
-swift test          # parsers, store, cycles, forecasts, alerts, replay (114 tests)
+swift test          # parsers, store, cycles, forecasts, alerts, advice, replay (241 tests)
 make app            # -> QuotaBar.app (LSUIElement, menu-bar only)
 make run            # launch
 make install        # build and replace /Applications/QuotaBar.app, relaunch
@@ -279,6 +325,18 @@ every quota row and chart. Notifications are opt-in (`⋯ → Quota alerts`).
   account identity, so it is not attributed to the signed-in account and is
   labelled as such in the History window. Live observations are account-scoped,
   so switching accounts never blends live history.
+- **Advice is provider-scope.** It reports which provider has quota, not which
+  model to use: the quota endpoints do not expose model-level eligibility, and
+  the three providers report different units, so there is no ranking. Turning
+  advice off removes the row and the task-aware caption; `--advise-json` still
+  works.
+- **No per-project attribution yet.** Which repository consumed which quota is
+  specified in [docs/ATTRIBUTION.md](docs/ATTRIBUTION.md) but not implemented;
+  nothing reads other tools' session stores today.
+- **The Codex app-server source needs a signed-in CLI QuotaBar can find.** A
+  Finder-launched app does not inherit your shell `PATH`; the probe command
+  reports the exact binary it found. `Automatic` falls back to HTTP, strict
+  `Codex app-server` reports the failure instead.
 - **Clear History** is permanent: it records a deletion cutoff, so re-reading the
   Codex log (relaunch or offline fallback) cannot bring deleted observations back.
 - Updates are EdDSA-signed but the app is unsigned/not notarized; a Developer ID

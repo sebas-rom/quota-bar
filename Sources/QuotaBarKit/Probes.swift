@@ -12,11 +12,39 @@ public enum ProbeResult: Equatable {
     case failed(HealthState, String)
 }
 
+/// Where Codex numbers come from.
+///
+/// - `http` (default): the long-standing private endpoint. No local process.
+/// - `appServer`: the Codex CLI's typed local RPC only. Chosen deliberately for
+///   its extra payload (per-limit buckets, plan, reset credits) and because it
+///   makes no network request of its own; a failure is reported, not hidden.
+/// - `automatic`: the RPC when it answers, HTTP otherwise.
+public enum CodexSource: String, Sendable {
+    case http
+    case appServer
+    case automatic
+}
+
+/// The three probe entry points the model needs. `QuotaProbes` is the real
+/// implementation; the protocol exists so a test can control timing and source
+/// switches instead of hitting the network.
+public protocol ProbeProviding: Sendable {
+    var codexSource: CodexSource { get }
+    func go(now: Date) async -> ProbeResult
+    func codex(now: Date) async -> ProbeResult
+    func commandCode(now: Date) async -> ProbeResult
+    /// Used only by the in-app "Enter API key…" flow, which validates a key
+    /// before saving it.
+    func fetchGo(key: String, source: String) async -> GoFetchState
+}
+
 public struct QuotaProbes {
     private let session: URLSession
+    public let codexSource: CodexSource
 
-    public init(session: URLSession = .shared) {
+    public init(session: URLSession = .shared, codexSource: CodexSource = .http) {
         self.session = session
+        self.codexSource = codexSource
     }
 
     // MARK: Go
@@ -207,6 +235,48 @@ public struct QuotaProbes {
     }
 
     public func codex(now: Date = Date(), credentials: CodexCreds? = nil) async -> ProbeResult {
+        if codexSource != .http {
+            // A child process with a hard timeout, run off the cooperative pool.
+            let outcome = await Task.detached(priority: .utility) { () -> Result<CodexAppServerUsage, CodexAppServerError> in
+                do {
+                    return .success(try CodexAppServer.fetchUsage(timeout: 12, now: now))
+                } catch let error as CodexAppServerError {
+                    return .failure(error)
+                } catch {
+                    // Any non-protocol failure is a launch problem; the detail
+                    // is untrusted and is intentionally not carried.
+                    return .failure(.launch)
+                }
+            }.value
+            switch outcome {
+            case let .success(usage):
+                var facts: [String] = []
+                if let credits = usage.resetCreditsAvailable, credits > 0 {
+                    facts.append("\(credits) reset credit\(credits == 1 ? "" : "s")")
+                }
+                if usage.hasCredits == true, let balance = usage.creditBalance, balance != "0" {
+                    facts.append("Credits \(balance)")
+                }
+                return .ok(ProviderSnapshot(
+                    provider: .codex,
+                    windows: usage.windows,
+                    plan: usage.plan,
+                    accountRef: accountRef(usage.accountId),
+                    origin: .network,
+                    source: "codex app-server",
+                    observedAt: now,
+                    facts: facts
+                ))
+            case let .failure(error):
+                if codexSource == .appServer {
+                    // Strict mode: the user chose a local-only source, so a
+                    // quiet fall back to chatgpt.com would break that promise.
+                    return .failed(error.healthState, error.message)
+                }
+                // Automatic: a missing binary, a logged-out CLI or a protocol
+                // change must degrade, not blank the card.
+            }
+        }
         guard let creds = credentials ?? readCodexCreds() else {
             return .failed(.noCredentials, "No token in ~/.codex/auth.json.")
         }
@@ -276,5 +346,12 @@ public struct QuotaProbes {
             observedAt: local.observedAt
         )
         return .stale(snapshot, state, message + " Showing the last local Codex snapshot.")
+    }
+}
+
+extension QuotaProbes: ProbeProviding {
+    /// The protocol surface drops the optional credential override.
+    public func codex(now: Date) async -> ProbeResult {
+        await codex(now: now, credentials: nil)
     }
 }

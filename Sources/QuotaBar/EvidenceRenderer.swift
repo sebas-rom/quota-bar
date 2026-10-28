@@ -49,6 +49,12 @@ enum EvidenceRenderer {
                       to: directory.appendingPathComponent("popover-network.png"), dark: false)
         renderPopover(model: hiddenModel, layout: hidden, compact: true,
                       to: directory.appendingPathComponent("popover-hidden.png"), dark: false)
+        renderPopover(model: networkModel, layout: standard, compact: true,
+                      to: directory.appendingPathComponent("popover-advisor.png"), dark: false,
+                      advisor: true, taskMinutes: 60)
+        renderPopover(model: networkModel, layout: standard, compact: true,
+                      to: directory.appendingPathComponent("popover-advisor-dark.png"), dark: true,
+                      advisor: true, taskMinutes: 60)
         renderHistory(model: model, layout: standard,
                       to: directory.appendingPathComponent("history-light.png"), dark: false)
         renderHistory(model: model, layout: standard,
@@ -98,13 +104,17 @@ enum EvidenceRenderer {
         layout: ProviderLayoutStore,
         compact: Bool,
         to url: URL,
-        dark: Bool
+        dark: Bool,
+        advisor: Bool? = nil,
+        taskMinutes: Int? = nil
     ) {
         let view = PopoverView(
             model: model,
             layout: layout,
             showsPresentation: false,
-            compactOverride: compact
+            compactOverride: compact,
+            advisorOverride: advisor,
+            taskMinutesOverride: taskMinutes
         )
         render(view, width: 320, height: nil, dark: dark, to: url)
     }
