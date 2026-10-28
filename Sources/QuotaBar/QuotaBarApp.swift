@@ -1,6 +1,5 @@
 import SwiftUI
 import AppKit
-import ServiceManagement
 import QuotaBarKit
 
 // QuotaBar v0.4 — remembers what it sees.
@@ -9,7 +8,7 @@ import QuotaBarKit
 // Popover: current windows, 24h trend, provenance and freshness.
 // History: a real window with range charts over the local observation store.
 
-private let appVersion = "0.10.0"
+private let appVersion = "0.11.0"
 
 @MainActor
 enum AppEnvironment {
@@ -48,18 +47,24 @@ enum QuotaBarMain {
 struct QuotaBarApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var model = AppEnvironment.model
-    @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
+    @StateObject private var layout = ProviderLayoutStore()
 
     var body: some Scene {
         MenuBarExtra {
-            PopoverView(model: model, launchAtLogin: $launchAtLogin)
+            PopoverView(model: model, layout: layout)
         } label: {
+            let caption = MenuBarComposition.text(
+                style: layout.layout.menuBarStyle,
+                layout: layout.layout,
+                snapshots: model.snapshots,
+                health: model.health
+            )
             Label {
-                Text(model.barText)
+                Text(caption)
             } icon: {
                 Image(nsImage: MenuBarIcon.image)
             }
-            .accessibilityLabel(model.barText)
+            .accessibilityLabel(MenuBarComposition.accessibilityLabel(caption))
         }
         .menuBarExtraStyle(.window)
     }
@@ -90,7 +95,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.appearance = NSAppearance(named: .aqua)
         }
         if model.isDemo {
-            DemoHost.shared.present(model: model)
+            DemoHost.shared.present(model: model, layout: ProviderLayoutStore())
             return
         }
         // Start Sparkle with the app so automatic checks do not depend on the
@@ -136,13 +141,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 struct PopoverView: View {
     @ObservedObject var model: QuotaModel
+    @ObservedObject var layout: ProviderLayoutStore
     @ObservedObject private var updates = UpdateController.shared
     @ObservedObject private var alerter = QuotaAlerter.shared
+    @ObservedObject private var launchAtLogin = LaunchAtLoginController.shared
     @AppStorage("CompactCards") private var compactCards = true
-    @Binding var launchAtLogin: Bool
     /// Evidence snapshots render the content without presentation modifiers,
     /// which ImageRenderer cannot lay out reliably.
     var showsPresentation = true
+    /// Evidence renders pin the card density so snapshots never inherit the
+    /// developer's own preference.
+    var compactOverride: Bool? = nil
 
     @State private var showKeyEntry = false
     @State private var keyInput = ""
@@ -151,9 +160,12 @@ struct PopoverView: View {
     @State private var showAbout = false
     @State private var confirmRemoveKey = false
     @State private var confirmClearHistory = false
+    @State private var expandedProviders: Set<ProviderID> = []
+
+    private var isCompact: Bool { compactOverride ?? compactCards }
 
     private var visibleProviders: [ProviderID] {
-        ProviderID.allCases.filter {
+        layout.layout.visible.filter {
             let presentation = model.presentation(for: $0)
             return presentation != .checking && presentation != .unconfigured
         }
@@ -168,6 +180,16 @@ struct PopoverView: View {
         if let url = URL(string: "https://github.com/sebas-rom/quota-bar/blob/main/INSTALL.md#setup") {
             NSWorkspace.shared.open(url)
         }
+    }
+
+    private func openSettings() {
+        SettingsWindowController.shared.show(
+            model: model,
+            layout: layout,
+            alerter: alerter,
+            updates: updates,
+            launchAtLogin: launchAtLogin
+        )
     }
 
     private func recoveryAction(for provider: ProviderID) -> (() -> Void)? {
@@ -193,33 +215,52 @@ struct PopoverView: View {
         }
     }
 
-    private func cycleTrend(for provider: ProviderID) -> (points: [SamplePoint], start: Date, end: Date, label: String)? {
-        // The popover preview is about the current 5-hour window; monthly and
-        // weekly shapes live in History. Fall back to the limiting window only
-        // when a provider exposes no 5-hour window.
-        let windows = model.snapshots[provider]?.windows ?? []
-        let window = windows.first { $0.windowMinutes == 300 && ($0.kind == .rolling || $0.kind == .primary) }
-            ?? model.snapshots[provider]?.limiting
-        guard let window else { return nil }
-        // Sliding windows have no stable cycle boundary: their preview is the
-        // trailing five hours of observations, not a reset-bounded cycle.
-        if model.isRollingWindow(provider, window) {
-            let now = Date()
-            let points = model.trailingSamples(for: provider, window: window, now: now)
-            guard points.count >= 2 else { return nil }
-            return (points, now.addingTimeInterval(-5 * 3_600), now, "Last 5 hours")
-        }
-        guard let trend = model.cycleTrend(for: provider, window: window) else { return nil }
-        return (trend.points, trend.cycle.start, trend.cycle.end, cycleLabel(window.windowMinutes))
+    /// The heads-up row exists for information the cards cannot show: a hidden
+    /// provider's warning, or a compact card whose meter is not the offending
+    /// window. A warning already visible on a card is not repeated.
+    private var headsUp: QuotaModel.HeadsUp? {
+        guard let headsUp = model.headsUp else { return nil }
+        let show = AttentionBanner.shouldShow(
+            isHidden: layout.layout.hidden.contains(headsUp.provider),
+            alertsEnabled: alerter.enabled && alerter.isEnabled(for: headsUp.provider),
+            isCompact: isCompact,
+            isExpanded: expandedProviders.contains(headsUp.provider),
+            warnedWindowID: headsUp.window.id,
+            limitingWindowID: model.snapshots[headsUp.provider]?.limiting?.id
+        )
+        return show ? headsUp : nil
     }
 
-    private func cycleLabel(_ minutes: Int?) -> String {
-        switch minutes {
-        case 300: return "5h cycle"
-        case 10_080: return "7d cycle"
-        case 43_200: return "30d cycle"
-        default: return "cycle"
+    private struct CardTrend {
+        let points: [SamplePoint]
+        let start: Date
+        let end: Date
+    }
+
+    /// Trend for the window the card actually displays, never for a different
+    /// window on the same provider.
+    private func trend(for provider: ProviderID, window: QuotaWindow, now: Date = Date()) -> CardTrend? {
+        if model.isRollingWindow(provider, window) {
+            let start = now.addingTimeInterval(-5 * 3_600)
+            let points = model.trailingSamples(for: provider, window: window, now: now)
+            guard TrendCoverage.isMeaningful(points: points, frameStart: start, frameEnd: now) else { return nil }
+            return CardTrend(points: points, start: start, end: now)
         }
+        guard let cycle = model.cycleTrend(for: provider, window: window),
+              TrendCoverage.isMeaningful(points: cycle.points, frameStart: cycle.cycle.start, frameEnd: cycle.cycle.end) else {
+            return nil
+        }
+        return CardTrend(points: cycle.points, start: cycle.cycle.start, end: cycle.cycle.end)
+    }
+
+    private var needsScroll: Bool {
+        visibleProviders.count + setupProviders.count > 3
+    }
+
+    private var maxStackHeight: CGFloat {
+        let screen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main
+        let available = (screen?.visibleFrame.height ?? 700) - 120
+        return max(320, min(620, available))
     }
 
     var body: some View {
@@ -253,50 +294,12 @@ struct PopoverView: View {
 
     private var content: some View {
         VStack(alignment: .leading, spacing: Layout.cardSpacing) {
-            if let headsUp = model.headsUp {
-                HStack(alignment: .top, spacing: 8) {
-                    Image(systemName: headsUp.isLimit ? "exclamationmark.octagon.fill" : "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
-                        .font(.caption)
-                    Text(headsUp.text)
-                        .font(.caption)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .padding(8)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
-                .accessibilityElement(children: .combine)
+            if needsScroll {
+                ScrollView { stack }
+                    .frame(maxHeight: maxStackHeight)
+            } else {
+                stack
             }
-            ForEach(visibleProviders, id: \.self) { provider in
-                let trend = cycleTrend(for: provider)
-                ProviderCard(
-                    provider: provider,
-                    snapshot: model.snapshots[provider],
-                    health: model.health[provider],
-                    trend: trend?.points ?? [],
-                    trendStart: trend?.start,
-                    trendEnd: trend?.end,
-                    trendLabel: trend?.label,
-                    freshness: model.staleness(for: provider),
-                    onRecovery: recoveryAction(for: provider),
-                    recoveryTitle: recoveryTitle(for: provider),
-                    forecastFor: { window in
-                        guard window.windowMinutes == 300,
-                              window.kind == .rolling || window.kind == .primary else { return nil }
-                        return ForecastCopy.line(for: model.forecast(for: provider, window: window))
-                    },
-                    compact: compactCards
-                )
-            }
-            if !model.setupProviders.isEmpty {
-                SetupCard(
-                    providers: model.setupProviders,
-                    checking: Set(model.setupProviders.filter { model.presentation(for: $0) == .checking }),
-                    hasConfigured: model.hasConfiguredProvider,
-                    onEnterKey: { showKeyEntry = true }
-                )
-            }
-            if showKeyEntry { keyEntry }
             Divider()
             footer
         }
@@ -308,35 +311,130 @@ struct PopoverView: View {
         .background(Color(nsColor: .windowBackgroundColor))
     }
 
+    @ViewBuilder
+    private var stack: some View {
+        VStack(alignment: .leading, spacing: Layout.cardSpacing) {
+            if let headsUp {
+                headsUpRow(headsUp)
+            }
+            ForEach(visibleProviders, id: \.self) { provider in
+                let snapshot = model.snapshots[provider]
+                let cardTrend = snapshot?.limiting.flatMap { trend(for: provider, window: $0) }
+                ProviderCard(
+                    provider: provider,
+                    snapshot: snapshot,
+                    health: model.health[provider],
+                    trend: cardTrend?.points ?? [],
+                    trendStart: cardTrend?.start,
+                    trendEnd: cardTrend?.end,
+                    freshness: model.staleness(for: provider),
+                    onRecovery: recoveryAction(for: provider),
+                    recoveryTitle: recoveryTitle(for: provider),
+                    forecastFor: { window in
+                        guard window.windowMinutes == 300,
+                              window.kind == .rolling || window.kind == .primary else { return nil }
+                        return ForecastCopy.riskLine(for: model.forecast(for: provider, window: window))
+                    },
+                    compact: isCompact,
+                    isExpanded: expandedProviders.contains(provider),
+                    onToggleExpanded: { toggleExpanded(provider) }
+                )
+            }
+            if !visibleProviders.isEmpty, layout.layout.hidden.isEmpty == false {
+                HiddenNote(count: layout.layout.hidden.count, onSettings: openSettings)
+            }
+            if !setupProviders.isEmpty {
+                SetupCard(
+                    providers: setupProviders,
+                    checking: Set(setupProviders.filter { model.presentation(for: $0) == .checking }),
+                    hasConfigured: model.hasConfiguredProvider,
+                    onEnterKey: { showKeyEntry = true }
+                )
+            }
+            if showKeyEntry { keyEntry }
+            if visibleProviders.isEmpty, setupProviders.isEmpty, !showKeyEntry {
+                HiddenNote(count: layout.layout.hidden.count, isEmpty: true, onSettings: openSettings)
+            }
+        }
+    }
+
+    private func headsUpRow(_ headsUp: QuotaModel.HeadsUp) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: headsUp.isLimit ? "exclamationmark.octagon.fill" : "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+                .font(.caption)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(headsUp.text)
+                    .font(.caption)
+                    .fixedSize(horizontal: false, vertical: true)
+                if layout.layout.hidden.contains(headsUp.provider) {
+                    Button("Hidden in overview · Settings…") { openSettings() }
+                        .font(.caption2)
+                        .buttonStyle(.plain)
+                        .foregroundStyle(Color.accentColor)
+                }
+            }
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+        .accessibilityElement(children: .combine)
+    }
+
+    private func toggleExpanded(_ provider: ProviderID) {
+        if expandedProviders.contains(provider) {
+            expandedProviders.remove(provider)
+        } else {
+            expandedProviders.insert(provider)
+        }
+    }
+
+    private var setupProviders: [ProviderID] {
+        layout.layout.visible.filter {
+            let presentation = model.presentation(for: $0)
+            return presentation == .checking || presentation == .unconfigured
+        }
+    }
+
     // MARK: footer
 
     @ViewBuilder
     private var footer: some View {
         HStack(spacing: 8) {
-            Button(model.refreshing ? "Refreshing…" : "Refresh") {
+            Button {
                 Task { await model.refresh() }
+            } label: {
+                Label(model.refreshing ? "Refreshing" : "Refresh", systemImage: "arrow.clockwise")
+                    .labelStyle(.iconOnly)
             }
+            .buttonStyle(.plain)
             .keyboardShortcut("r")
             .disabled(model.refreshing)
+            .help(model.refreshing ? "Refreshing…" : "Refresh now (⌘R)")
+            .accessibilityLabel(model.refreshing ? "Refreshing" : "Refresh")
 
             Button("History…") {
-                HistoryWindowController.shared.show(model: model)
+                HistoryWindowController.shared.show(model: model, layout: layout)
             }
             .disabled(model.store == nil)
 
             Spacer()
 
+            Button {
+                openSettings()
+            } label: {
+                Label("Settings", systemImage: "gearshape")
+                    .labelStyle(.iconOnly)
+            }
+            .buttonStyle(.plain)
+            .help("Settings…")
+            .accessibilityLabel("Settings")
+
             if showsPresentation {
             Menu {
-                Toggle("Launch at login", isOn: $launchAtLogin)
-                    .onChange(of: launchAtLogin) { on in
-                        do {
-                            if on { try SMAppService.mainApp.register() }
-                            else { try SMAppService.mainApp.unregister() }
-                        } catch {
-                            launchAtLogin = SMAppService.mainApp.status == .enabled
-                        }
-                    }
+                Button("Settings…") { openSettings() }
+                    .keyboardShortcut(",", modifiers: .command)
+                Divider()
                 Button("Show Credential Files") {
                     NSWorkspace.shared.open(homeDir().appendingPathComponent(".local/share/opencode"))
                     NSWorkspace.shared.open(homeDir().appendingPathComponent(".codex"))
@@ -346,41 +444,6 @@ struct PopoverView: View {
                 }
                 if model.store != nil {
                     Button("Clear History…") { confirmClearHistory = true }
-                }
-                Divider()
-                Toggle("Compact cards", isOn: $compactCards)
-                Toggle("Quota alerts", isOn: Binding(
-                    get: { alerter.enabled },
-                    set: { on in Task { await alerter.setEnabled(on) } }
-                ))
-                if alerter.enabled {
-                    Menu("Alert providers") {
-                        ForEach(ProviderID.allCases, id: \.self) { provider in
-                            Toggle(provider.displayName, isOn: Binding(
-                                get: { alerter.isEnabled(for: provider) },
-                                set: { alerter.setProvider(provider, enabled: $0) }
-                            ))
-                        }
-                    }
-                    Button("Send Test Alert") {
-                        Task { await alerter.sendTest() }
-                    }
-                }
-                Divider()
-                Button("Check for Updates…") { updates.checkForUpdates() }
-                Toggle("Check automatically", isOn: $updates.automaticChecks)
-                Menu("Update channel") {
-                    ForEach(UpdateChannel.allCases) { channel in
-                        Button {
-                            updates.setChannel(channel)
-                        } label: {
-                            if updates.channel == channel {
-                                Label(channel.title, systemImage: "checkmark")
-                            } else {
-                                Text(channel.title)
-                            }
-                        }
-                    }
                 }
                 Divider()
                 Button("About QuotaBar") { showAbout = true }
@@ -467,7 +530,7 @@ struct PopoverView: View {
     private var aboutView: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("QuotaBar \(appVersion)").font(.headline)
-            Text("Two stacks, one glance: current quota, 24h trend, local history.")
+            Text("Every provider, one glance: current quota, cycle history, all local.")
                 .foregroundStyle(.secondary)
             Divider()
             Text("Go: opencode.ai/zen/go/v1/usage").font(.caption).monospaced()
@@ -498,13 +561,13 @@ struct ProviderCard: View {
     let trend: [SamplePoint]
     var trendStart: Date? = nil
     var trendEnd: Date? = nil
-    var trendLabel: String? = nil
     let freshness: String?
     var onRecovery: (() -> Void)? = nil
     var recoveryTitle: String? = nil
     var forecastFor: (QuotaWindow) -> String? = { _ in nil }
     var compact = false
-    @State private var expanded = false
+    var isExpanded = false
+    var onToggleExpanded: () -> Void = {}
 
     var body: some View {
         Card(
@@ -512,8 +575,8 @@ struct ProviderCard: View {
             dot: dotColor(for: snapshot?.limiting?.percent),
             subtitle: subtitle,
             isExpandable: compact && (snapshot?.windows.count ?? 0) > 1,
-            isExpanded: expanded,
-            onToggleExpanded: { expanded.toggle() }
+            isExpanded: isExpanded,
+            onToggleExpanded: onToggleExpanded
         ) {
             if let snapshot, !snapshot.windows.isEmpty {
                 ForEach(visibleWindows(snapshot)) { window in
@@ -527,21 +590,31 @@ struct ProviderCard: View {
                         forecast: forecastFor(window)
                     )
                 }
-                if trend.count >= 2 {
-                    HStack(spacing: 6) {
-                        Sparkline(
-                            points: trend,
-                            color: dotColor(dotColor(for: sparklinePercent)),
-                            start: trendStart,
-                            end: trendEnd
-                        )
-                        Text(trendLabel ?? "cycle").font(.caption2).foregroundStyle(.tertiary)
-                    }
+                // The chart belongs to the one window the compact card shows.
+                // Expanded cards list every window, so a single unlabeled
+                // chart would be ambiguous; History owns that view.
+                if compact, !isExpanded, trend.count >= 2, let window = snapshot.limiting {
+                    Sparkline(
+                        points: trend,
+                        color: dotColor(usageColorName(for: window.percent)),
+                        start: trendStart,
+                        end: trendEnd
+                    )
                     .padding(.top, 2)
                     .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("\(provider.displayName) 24 hour trend")
+                    .accessibilityLabel("\(provider.displayName) \(window.label) trend")
                 }
-                StatusLine(text: statusText, degraded: degraded)
+                if !statusBits.isEmpty {
+                    StatusLine(text: statusBits.joined(separator: " · "), degraded: degraded)
+                }
+                if !snapshot.facts.isEmpty {
+                    Text(snapshot.facts.joined(separator: " · "))
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .help(snapshot.facts.joined(separator: " · "))
+                }
                 if let onRecovery, health?.state != .ok {
                     Button(recoveryTitle ?? "Fix…", action: onRecovery)
                         .font(.caption)
@@ -550,19 +623,14 @@ struct ProviderCard: View {
                 emptyState
             }
         }
+        .help(tooltip)
     }
 
     private func visibleWindows(_ snapshot: ProviderSnapshot) -> [QuotaWindow] {
-        if compact, !expanded, let limiting = snapshot.limiting {
+        if compact, !isExpanded, let limiting = snapshot.limiting {
             return [limiting]
         }
         return snapshot.windows
-    }
-
-    private var sparklinePercent: Double? {
-        snapshot?.windows.first {
-            $0.windowMinutes == 300 && ($0.kind == .rolling || $0.kind == .primary)
-        }?.percent ?? snapshot?.limiting?.percent
     }
 
     private var subtitle: String? {
@@ -576,32 +644,31 @@ struct ProviderCard: View {
         return !health.state.isHealthy || freshness != nil
     }
 
-    private var statusText: String {
+    /// Only non-routine facts earn a line: a problem, a stale reading, or a
+    /// local-log fallback. "live · via <endpoint>" is provenance, not status.
+    private var statusBits: [String] {
         var bits: [String] = []
         if let health, !health.state.isHealthy, let message = health.message {
             bits.append(message)
         }
-        if let facts = snapshot?.facts, !facts.isEmpty {
-            bits.append(contentsOf: facts)
-        }
         if let freshness {
             bits.append("last good \(freshness)")
-        } else if let snapshot {
-            switch snapshot.origin {
-            case .network: bits.append("live")
-            case .localLog: bits.append("local log")
-            case .demo: break
-            }
+        } else if let snapshot, snapshot.origin == .localLog {
+            bits.append("local log")
         }
-        if let health, health.state.isHealthy, snapshot?.origin == .network {
-            bits.append("via \(provenance)")
-        }
-        return bits.joined(separator: " · ")
+        return bits
     }
 
-    private var provenance: String {
-        guard let snapshot else { return "—" }
-        return snapshot.source
+    private var tooltip: String {
+        guard let snapshot else { return provider.displayName }
+        var bits: [String] = [snapshot.source]
+        switch snapshot.origin {
+        case .network: bits.append("live reading")
+        case .localLog: bits.append("local log fallback")
+        case .demo: bits.append("demo data")
+        }
+        bits.append(freshnessText(for: snapshot.observedAt))
+        return "\(provider.displayName) · \(bits.joined(separator: " · "))"
     }
 
     @ViewBuilder
@@ -631,8 +698,9 @@ struct ProviderCard: View {
 final class HistoryWindowController: NSObject, NSWindowDelegate {
     static let shared = HistoryWindowController()
     private var window: NSWindow?
+    private var isOpen = false
 
-    func show(model: QuotaModel) {
+    func show(model: QuotaModel, layout: ProviderLayoutStore) {
         if window == nil {
             let window = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 620, height: 580),
@@ -644,21 +712,55 @@ final class HistoryWindowController: NSObject, NSWindowDelegate {
             window.isReleasedWhenClosed = false
             window.minSize = NSSize(width: 520, height: 420)
             window.delegate = self
-            window.contentView = NSHostingView(rootView: HistoryView(model: model))
+            window.contentView = NSHostingView(rootView: HistoryView(model: model, layout: layout))
             window.center()
             window.setFrameAutosaveName("QuotaHistoryWindow")
             self.window = window
         }
-        NSApp.setActivationPolicy(.regular)
+        if !isOpen {
+            isOpen = true
+            SecondaryWindowPolicy.didOpen()
+        }
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
     }
 
     func windowWillClose(_ notification: Notification) {
-        NSApp.setActivationPolicy(.accessory)
+        guard isOpen else { return }
+        isOpen = false
+        SecondaryWindowPolicy.didClose()
     }
 }
 
+
+// MARK: - Setup + hidden notes
+
+struct HiddenNote: View {
+    var count: Int
+    var isEmpty = false
+    var onSettings: () -> Void = {}
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "eye.slash")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+            Text(isEmpty
+                 ? "All providers are hidden."
+                 : "\(count) hidden in overview.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Button("Settings…", action: onSettings)
+                .font(.caption2)
+                .buttonStyle(.plain)
+                .foregroundStyle(Color.accentColor)
+                .accessibilityLabel("Open provider settings")
+        }
+        .padding(.horizontal, 2)
+    }
+}
 
 struct SetupCard: View {
     let providers: [ProviderID]
@@ -668,70 +770,68 @@ struct SetupCard: View {
     @State private var copied: ProviderID?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 8) {
             Text(hasConfigured ? "Connect another provider" : "Get started with QuotaBar")
-                .font(.headline)
+                .font(.subheadline.weight(.semibold))
             Text(hasConfigured
                  ? "Add another service whenever you need it."
                  : "QuotaBar reads usage locally and never sends it to another server.")
-                .font(.caption)
+                .font(.caption2)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
             ForEach(providers, id: \.self) { provider in
-                Divider()
-                row(provider)
+                HStack(spacing: 8) {
+                    Text(provider.displayName).font(.callout)
+                    if checking.contains(provider) {
+                        ProgressView().controlSize(.mini)
+                        Text("Checking…").font(.caption2).foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 8)
+                    if !checking.contains(provider) {
+                        action(provider)
+                    }
+                }
+                .padding(.vertical, 2)
             }
         }
-        .padding(12)
-        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
+        .padding(10)
+        .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 10))
     }
 
     @ViewBuilder
-    private func row(_ provider: ProviderID) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(provider.displayName).font(.subheadline.weight(.medium))
-            if checking.contains(provider) {
-                HStack(spacing: 6) {
-                    ProgressView().controlSize(.small)
-                    Text("Checking…").font(.caption).foregroundStyle(.secondary)
+    private func action(_ provider: ProviderID) -> some View {
+        switch provider {
+        case .go:
+            Button("Enter key…", action: onEnterKey)
+                .font(.caption)
+                .accessibilityLabel("Enter OpenCode Go API key")
+        case .codex:
+            HStack(spacing: 6) {
+                Button(copied == .codex ? "Copied" : "Copy login") {
+                    copyToPasteboard("codex login", provider)
                 }
-            } else {
-                switch provider {
-                case .go:
-                    Text("Enter your Personal API key.").font(.caption).foregroundStyle(.secondary)
-                    Button("Enter API key…", action: onEnterKey)
-                        .font(.caption)
-                case .codex:
-                    Text("Sign in with the Codex CLI, then refresh.").font(.caption).foregroundStyle(.secondary)
-                    HStack(spacing: 8) {
-                        Text("codex login").font(.system(.caption, design: .monospaced))
-                        Button(copied == .codex ? "Copied" : "Copy") {
-                            copyToPasteboard("codex login", provider)
-                        }
-                        Button("Open ~/.codex") {
-                            NSWorkspace.shared.open(homeDir().appendingPathComponent(".codex"))
-                        }
+                Button {
+                    NSWorkspace.shared.open(homeDir().appendingPathComponent(".codex"))
+                } label: {
+                    Image(systemName: "folder")
+                }
+                .help("Open ~/.codex")
+                .accessibilityLabel("Open Codex credential folder")
+            }
+            .font(.caption)
+        case .commandCode:
+            HStack(spacing: 6) {
+                Button(copied == .commandCode ? "Copied" : "Copy path") {
+                    copyToPasteboard(homeDir().appendingPathComponent(".config/opencode/opencode.json").path, provider)
+                }
+                Button("Setup…") {
+                    if let url = URL(string: "https://github.com/sebas-rom/quota-bar/blob/main/INSTALL.md#setup") {
+                        NSWorkspace.shared.open(url)
                     }
-                    .font(.caption)
-                case .commandCode:
-                    Text("Add your key under provider.commandcode.settings.apiKey in ~/.config/opencode/opencode.json.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    HStack(spacing: 8) {
-                        Button(copied == .commandCode ? "Copied" : "Copy config path") {
-                            copyToPasteboard(homeDir().appendingPathComponent(".config/opencode/opencode.json").path, provider)
-                        }
-                        Button("Setup instructions") {
-                            if let url = URL(string: "https://github.com/sebas-rom/quota-bar/blob/main/INSTALL.md#setup") {
-                                NSWorkspace.shared.open(url)
-                            }
-                        }
-                    }
-                    .font(.caption)
                 }
             }
+            .font(.caption)
         }
     }
 

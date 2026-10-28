@@ -131,6 +131,24 @@ public func goStateForStatus(_ code: Int) -> GoFetchState? {
 
 // MARK: - Display helpers
 
+/// Compact companion for dense surfaces: "3h 29m left" / "2d left".
+/// `resetText` stays the full sentence for alerts and History.
+public func remainingText(until date: Date?, now: Date = Date()) -> String? {
+    guard let date else { return nil }
+    let secs = max(0, Int(date.timeIntervalSince(now)))
+    if secs < 90 { return "\(secs)s left" }
+    let mins = secs / 60
+    if mins < 90 { return "\(mins)m left" }
+    let hours = mins / 60
+    if hours < 48 {
+        let m = mins % 60
+        return m == 0 ? "\(hours)h left" : "\(hours)h \(m)m left"
+    }
+    let days = hours / 24
+    if days < 14 { return "\(days)d left" }
+    return date.formatted(.dateTime.month(.abbreviated).day())
+}
+
 public func resetText(until date: Date?, now: Date = Date()) -> String? {
     guard let date else { return nil }
     let secs = max(0, Int(date.timeIntervalSince(now)))

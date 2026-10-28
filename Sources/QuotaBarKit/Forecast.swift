@@ -194,6 +194,19 @@ public enum ForecastCopy {
         }
     }
 
+    /// Popover variant: reassurance ("below 95% at reset") is noise on a glance
+    /// surface. Only projected risk earns a line; History keeps the full copy.
+    public static func riskLine(for state: ForecastState) -> String? {
+        switch state {
+        case let .approaching95(minutes, _):
+            return "Estimated at recent pace · 95% in ~\(duration(minutes))"
+        case let .already95(resetMinutes):
+            return "95% reached · resets in \(duration(resetMinutes))"
+        case .below95, .collecting, .unavailable:
+            return nil
+        }
+    }
+
     static func duration(_ minutes: Int) -> String {
         if minutes < 60 { return "\(minutes)m" }
         let h = minutes / 60

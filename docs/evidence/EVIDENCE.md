@@ -1,4 +1,4 @@
-# UI evidence — QuotaBar v0.4
+# UI evidence — QuotaBar
 
 Generated offscreen from the real SwiftUI views with the demo data set, so the
 review does not depend on live provider state or a logged-in desktop.
@@ -11,18 +11,26 @@ Command:
 
 | File | View | Size (pt) |
 |---|---|---|
-| `popover-light.png` | `PopoverView` (compact cards) | 320 × 631 |
-| `popover-dark.png` | same, dark appearance | 320 × 631 |
-| `history-light.png` | `HistoryView` (cycle-first History content) | 620 × 1343 |
-| `history-dark.png` | same, dark appearance | 620 × 1343 |
-| `popover-setup.png` | setup card with one configured provider | 320 × 561 |
+| `popover-light.png` | `PopoverView` (compact cards) | 320 × 504 |
+| `popover-dark.png` | same, dark appearance | 320 × 504 |
+| `popover-all-windows.png` | `PopoverView` with compact cards off (every window) | 320 × 696 |
+| `popover-network.png` | compact cards, network-origin snapshots | 320 × 504 |
+| `popover-hidden.png` | compact cards, Command Code hidden | 320 × 368 |
+| `popover-setup.png` | setup rows with one configured provider | 320 × 346 |
+| `history-light.png` | `HistoryView` (cycle-first History content) | 620 × 1461 |
+| `history-dark.png` | same, dark appearance | 620 × 1461 |
 | `menubar-icon.png` | menu-bar template icon (6×) | 108 × 108 |
 | `app-icon.png` | app icon master | 1024 × 1024 |
 
 Each view PNG is 2× (Retina). The data is synthetic and labelled "Demo data" in
-the popover footer. The demo intentionally sets OpenCode Go monthly to 93% so the
-90%-used heads-up row is visible; the app icon master comes from
-`scripts/make-app-icon.swift`.
+the popover footer. The demo intentionally sets OpenCode Go monthly to 93%; that
+window is visible on the Go card, so the heads-up row is deliberately suppressed
+(it only appears when the warning is not already on screen). The app icon master
+comes from `scripts/make-app-icon.swift`.
+
+Capture inputs are pinned: one clock per run, an explicit `ProviderLayout`
+instead of the developer's real preferences, and an explicit card density. An
+empty layout defaults to all providers, which is what `popover-light.png` shows.
 
 ## Why offscreen
 
@@ -36,9 +44,10 @@ output without a display.
 
 - System popover chrome (material, arrow, shadow) is not part of the rendered
   content; the app uses `MenuBarExtra(.window)`, which supplies it.
-- The overflow `Menu` and the 24h/7d `Picker` are live AppKit controls that the
-  offscreen renderer cannot draw; the snapshot path renders a static glyph /
-  range chip in their place. The live controls are unchanged in the app.
+- The overflow `Menu` is a live AppKit control that the offscreen renderer
+  cannot draw; the snapshot path renders a static glyph. The live control is
+  unchanged in the app. The Settings window has no offscreen capture: it hosts
+  `TabView`/`List` controls that only lay out in a real window.
 - `ScrollView` is replaced by a plain stack for the history snapshot so the full
   content is captured instead of one viewport.
 - Colors use a neutral fixed backdrop (near-white / near-black) instead of
@@ -52,7 +61,7 @@ the narrowest supported presentation; the History window has a 520 pt minimum.
 
 ## Identity and alerts (v0.5)
 
-- The menu bar uses a static monochrome "Q" template image plus the numeric
+- The menu bar uses a static monochrome two-bar template image plus the numeric
   label; no quota state is encoded in the icon.
 - The app bundle carries `Resources/QuotaBar.icns` via `CFBundleIconFile`.
 - Alerts are opt-in, request permission on enable, and are evaluated only for

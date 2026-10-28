@@ -54,7 +54,7 @@ struct MeterRow: View {
                     .font(.subheadline).fontWeight(.semibold).monospacedDigit()
             }
             MeterBar(percent: percent, color: dotColor(usageColorName(for: percent)))
-            if let resetText = resetText(until: reset) {
+            if let resetText = remainingText(until: reset) {
                 Text(resetText).font(.caption).foregroundStyle(.secondary)
             }
             if let forecast {
@@ -74,7 +74,7 @@ struct MeterRow: View {
         var bits: [String] = []
         if isLimiting { bits.append("Limiting window.") }
         if flag != nil { bits.append("Limit reached.") }
-        if let resetText = resetText(until: reset) { bits.append(resetText.capitalized + ".") }
+        if let resetText = remainingText(until: reset) { bits.append(resetText.capitalized + ".") }
         if let forecast { bits.append(forecast) }
         return bits.joined(separator: " ")
     }
@@ -170,6 +170,7 @@ struct Sparkline: View {
                         startPoint: .top, endPoint: .bottom
                     ))
                 }
+                .clipped()
             } else {
                 Path { path in
                     path.move(to: CGPoint(x: 0, y: size.height - 0.5))
@@ -188,7 +189,8 @@ struct Sparkline: View {
         let t1 = end ?? sorted.last?.at ?? Date()
         let span = max(1, t1.timeIntervalSince(t0))
         return sorted.map { point in
-            let x = t1 == t0 ? size.width : CGFloat(point.at.timeIntervalSince(t0) / span) * size.width
+            let rawX = t1 == t0 ? size.width : CGFloat(point.at.timeIntervalSince(t0) / span) * size.width
+            let x = min(max(rawX, 0), size.width)
             let clamped = min(max(point.percent, 0), 100)
             let y = size.height - CGFloat(clamped / 100) * size.height
             return CGPoint(x: x, y: y)

@@ -1,5 +1,32 @@
 # Decisions
 
+## 2026-10-27 — Provider layout is presentation-only
+
+**Status:** accepted.
+
+**Context.** Ordering and visibility were hardcoded to `ProviderID.allCases`, so
+the popover, menu bar and History could not be arranged, and a provider could not
+be removed from the glance surface without also losing its history.
+
+**Decision.** `ProviderLayout` (order, hidden set, menu-bar style) is stored as
+one JSON value in UserDefaults and consumed only by presentation. Hiding a
+provider removes its card and its menu-bar percentage; the app keeps probing and
+storing it, History keeps every provider (labelled "Hidden in overview"), and
+its own alert switch still applies. A warning for a hidden provider appears in
+the popover only while alerts for that provider are enabled. The
+machine-readable contract (`qbar --status-json`) and alert identity never consult
+the layout.
+
+**Consequences.**
+
+- Absent, corrupt, duplicate or unknown persisted ids normalize to a
+  deterministic layout; providers added later are appended so they cannot be
+  invisible after an update.
+- Menu-bar style is a separate preference; hiding every provider falls back to
+  the icon without rewriting the stored style.
+- History remains the complete analytical surface, so hiding can never be used
+  as data deletion.
+
 ## 2026-10-27 — Notarization deliberately deferred
 
 **Status:** accepted.

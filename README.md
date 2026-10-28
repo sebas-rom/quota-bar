@@ -10,11 +10,40 @@ Command Code quota** that remembers: cycle-first history, a local observation
 store, and a forecast you can see — still local-first, still no browser or
 keychain scraping.
 
-Menu shows e.g. `Go 74% · Cx 22% · CC 11%`. Click for three provider cards with
-per-window percentages, reset countdowns, a current-cycle sparkline and the
-freshness of what you are looking at.
+Menu shows e.g. `Go 74% · Cx 22% · CC 11%`, or just the worst provider, or the
+icon alone. Click for provider cards with the most-used window, its reset
+countdown and a sparkline for that same window. Order and visibility live in
+**Settings** (⌘, / gear in the popover), not in a hidden defaults key.
 
 ![Popover](docs/evidence/popover-light.png)
+
+## What's new in 0.11 — a quieter popover you can arrange
+
+- **Providers in your order.** Drag rows in Settings → Providers, or select one
+  and use Move Up/Down. The order applies to the popover, the menu bar, setup
+  rows and History. **Reset to Default** is one click.
+- **Hide without losing data.** “Show in overview” removes a provider from the
+  popover and menu-bar percentages. QuotaBar keeps polling, storing and
+  charting it in History, and its own alert switch still applies. The popover
+  says how many providers are hidden and links to Settings.
+- **Menu bar display.** All percentages, worst only (`Go 93%`), or icon only.
+  The mode is stored; hiding every provider shows the icon without changing what
+  you chose.
+- **One sparkline, one meaning.** The compact chart now belongs to the window
+  its meter shows, and it is suppressed until the samples cover a real share of
+  that frame — a 5-hour trend can no longer sit under a monthly percentage.
+- **Less repetition.** Reassurance-only forecast copy (“below 95% at reset”) is
+  gone from the popover, the warning banner no longer repeats a percentage that
+  is already on a card, healthy cards no longer print `live · via <endpoint>`,
+  and resets read `3h 29m left` instead of a sentence.
+- **Settings, not a catch-all menu.** Launch at login, compact cards, alerts and
+  provider toggles, updates and the new provider layout moved out of the ⋯ menu;
+  it keeps credentials, history deletion, About and Quit.
+
+Evidence: [popover light](docs/evidence/popover-light.png) ·
+[all windows](docs/evidence/popover-all-windows.png) ·
+[one provider hidden](docs/evidence/popover-hidden.png) ·
+[setup](docs/evidence/popover-setup.png).
 
 ## What's new in 0.10 — onboarding, alert control, replay
 

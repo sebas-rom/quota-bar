@@ -11,6 +11,9 @@ import QuotaBarKit
 
 struct HistoryView: View {
     @ObservedObject var model: QuotaModel
+    /// Optional layout: History always shows every provider, in the user's
+    /// order, and labels the ones hidden from the overview.
+    var layout: ProviderLayoutStore? = nil
     /// Evidence snapshots render without ScrollView, which the offscreen
     /// renderer cannot lay out. The shipped window always uses the live path.
     var isSnapshot = false
@@ -42,10 +45,17 @@ struct HistoryView: View {
         }
     }
 
+    @ViewBuilder
     private var historyContent: some View {
+        let providers = layout?.layout.order ?? ProviderID.allCases
         VStack(alignment: .leading, spacing: 18) {
-            ForEach(ProviderID.allCases, id: \.self) { provider in
-                ProviderHistorySection(model: model, provider: provider, isSnapshot: isSnapshot)
+            ForEach(providers, id: \.self) { provider in
+                ProviderHistorySection(
+                    model: model,
+                    provider: provider,
+                    isSnapshot: isSnapshot,
+                    isHidden: layout?.layout.hidden.contains(provider) ?? false
+                )
             }
             HStack(spacing: 14) {
                 legendItem("Usage", style: .solid)
@@ -122,6 +132,7 @@ struct ProviderHistorySection: View {
     @ObservedObject var model: QuotaModel
     let provider: ProviderID
     var isSnapshot = false
+    var isHidden = false
 
     private var snapshot: ProviderSnapshot? { model.snapshots[provider] }
     private var health: ProviderHealth? { model.health[provider] }
@@ -139,6 +150,13 @@ struct ProviderHistorySection: View {
                         .font(.caption).foregroundStyle(.secondary)
                         .padding(.horizontal, 5).padding(.vertical, 1)
                         .background(.quaternary.opacity(0.5), in: Capsule())
+                }
+                if isHidden {
+                    Text("Hidden in overview")
+                        .font(.caption2).foregroundStyle(.secondary)
+                        .padding(.horizontal, 5).padding(.vertical, 1)
+                        .background(.quaternary.opacity(0.4), in: Capsule())
+                        .accessibilityLabel("Hidden from the overview")
                 }
                 Spacer()
                 if let snapshot {

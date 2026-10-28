@@ -9,8 +9,7 @@ import QuotaBarKit
 // shipped flow: the app only enters this path when launched with --demo.
 
 enum DemoData {
-    @MainActor static func seed(_ model: QuotaModel) {
-        let now = Date()
+    @MainActor static func seed(_ model: QuotaModel, now: Date = Date(), origin: SnapshotOrigin = .demo) {
         guard let store = model.store else { return }
 
         let goRollingReset = now.addingTimeInterval(3_073)       // 74% right now
@@ -83,6 +82,8 @@ enum DemoData {
                         windowMinutes: s.minutes, isLimited: false
                     )],
                     plan: s.provider == .codex ? "plus" : nil,
+                    // Synthetic history is stored as observations; the origin
+                    // parameter only labels the current snapshot.
                     origin: .network,
                     source: "demo data",
                     observedAt: t
@@ -102,7 +103,7 @@ enum DemoData {
                             percent: 93, resetsAt: now.addingTimeInterval(3 * 86_400), windowMinutes: 43_200, isLimited: false),
             ],
             plan: nil,
-            origin: .demo,
+            origin: origin,
             source: "opencode.ai/zen/go/v1/usage",
             observedAt: now.addingTimeInterval(-120)
         )
@@ -116,7 +117,7 @@ enum DemoData {
                             percent: 9, resetsAt: now.addingTimeInterval(4 * 86_400 + 6 * 3_600), windowMinutes: 10_080, isLimited: false),
             ],
             plan: "plus",
-            origin: .demo,
+            origin: origin,
             source: "chatgpt.com/backend-api/wham/usage",
             observedAt: now.addingTimeInterval(-40),
             facts: ["2 reset credits"]
@@ -134,7 +135,7 @@ enum DemoData {
                             cycleStart: now.addingTimeInterval(-86_400)),
             ],
             plan: "GOAT",
-            origin: .demo,
+            origin: origin,
             source: "api.commandcode.ai",
             observedAt: now.addingTimeInterval(-30),
             facts: ["68.6 of 70 credits left", "Renews Nov 27"]
@@ -149,8 +150,7 @@ enum DemoData {
 
 extension DemoData {
     @MainActor
-    static func seedSetup(_ model: QuotaModel) {
-        let now = Date()
+    static func seedSetup(_ model: QuotaModel, now: Date = Date()) {
         let codex = ProviderSnapshot(
             provider: .codex,
             windows: [
@@ -176,7 +176,7 @@ final class DemoHost {
     private var popover: NSPopover?
     private var anchor: NSWindow?
 
-    func present(model: QuotaModel) {
+    func present(model: QuotaModel, layout: ProviderLayoutStore) {
         guard let screen = NSScreen.main else { return }
 
         let anchorRect = NSRect(x: screen.frame.minX + 120, y: screen.frame.maxY - 1, width: 1, height: 1)
@@ -189,13 +189,13 @@ final class DemoHost {
         let popover = NSPopover()
         popover.behavior = .applicationDefined
         popover.animates = false
-        let host = NSHostingController(rootView: PopoverView(model: model, launchAtLogin: .constant(false)))
+        let host = NSHostingController(rootView: PopoverView(model: model, layout: layout))
         host.view.layoutSubtreeIfNeeded()
         popover.contentSize = host.view.fittingSize
         popover.contentViewController = host
         popover.show(relativeTo: anchor.contentView!.bounds, of: anchor.contentView!, preferredEdge: .minY)
         self.popover = popover
 
-        HistoryWindowController.shared.show(model: model)
+        HistoryWindowController.shared.show(model: model, layout: layout)
     }
 }

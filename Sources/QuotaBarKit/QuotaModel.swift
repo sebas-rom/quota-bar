@@ -513,13 +513,6 @@ public final class QuotaModel: ObservableObject {
         )
     }
 
-    public var setupProviders: [ProviderID] {
-        ProviderID.allCases.filter {
-            let presentation = presentation(for: $0)
-            return presentation == .checking || presentation == .unconfigured
-        }
-    }
-
     public var hasConfiguredProvider: Bool {
         ProviderID.allCases.contains {
             switch presentation(for: $0) {
@@ -527,20 +520,6 @@ public final class QuotaModel: ObservableObject {
             case .checking, .unconfigured: return false
             }
         }
-    }
-
-    public var barText: String {
-        var parts: [String] = []
-        for provider in ProviderID.allCases {
-            if let limiting = snapshots[provider]?.limiting {
-                parts.append("\(provider.shortName) \(Int(limiting.percent.rounded()))%")
-            } else if health[provider]?.state == .noCredentials {
-                continue
-            } else {
-                parts.append("\(provider.shortName) …")
-            }
-        }
-        return parts.isEmpty ? "○" : parts.joined(separator: " · ")
     }
 
     public func staleness(for provider: ProviderID, now: Date = Date()) -> String? {
